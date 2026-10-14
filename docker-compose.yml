@@ -1,0 +1,39 @@
+name: radar
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: radar
+    # small instance: the host is shared with another service
+    command: postgres -c shared_buffers=128MB -c maintenance_work_mem=128MB
+    volumes:
+      - pgdata:/var/lib/postgresql
+      # applied once, on an empty volume
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "127.0.0.1:${PG_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar -d radar"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # step 1: run on demand — `docker compose run --rm worker`; becomes the scheduler at step 5
+  worker:
+    build: .
+    image: radar-worker
+    profiles: ["jobs"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://radar:${POSTGRES_PASSWORD}@postgres:5432/radar
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 512m
+
+volumes:
+  pgdata:
