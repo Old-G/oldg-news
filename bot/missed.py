@@ -35,6 +35,8 @@ def build_router(owner_id: int) -> Router:
             story_id = queries.find_story_by_url(conn, url)
             facts = queries.missed_facts(conn, story_id, s.candidate_window_h) if story_id else None
             reason = cut_reason(Found(**{k: facts[k] for k in Found.__dataclass_fields__}) if facts else None)
+            if reason == "not_in_db" and queries.item_with_url(conn, url):
+                reason = "not_yet"  # fetched within the last hours, not clustered into a story yet
             if story_id is None:
                 story_id = queries.create_missed_story(conn, url)
             queries.add_feedback(conn, story_id, "missed", "bot")

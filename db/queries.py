@@ -770,6 +770,11 @@ def missed_facts(conn: psycopg.Connection, story_id: int, window_h: int) -> dict
     return dict(zip(keys, row))
 
 
+def item_with_url(conn: psycopg.Connection, url: str) -> bool:
+    """A raw item has the URL even if no story holds it yet (fetched, not clustered)."""
+    return conn.execute("select exists (select 1 from items where url = %s or %s = any(urls))", (url, url)).fetchone()[0]
+
+
 def create_missed_story(conn: psycopg.Connection, url: str) -> int:
     """A record for a URL no source had: dismissed at once, so it never enters a digest; carries the missed feedback."""
     return conn.execute(
