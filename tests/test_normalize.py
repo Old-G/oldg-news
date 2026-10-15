@@ -26,9 +26,10 @@ from core.normalize import canonical_url, canonical_urls, is_short
         ("https://github.com/topics/llm", "https://github.com/topics/llm"),
         ("https://github.com/org", "https://github.com/org"),
         # one domain for X
-        ("https://twitter.com/karpathy/status/123?s=20", "https://x.com/karpathy/status/123?s=20"),
-        ("https://mobile.twitter.com/karpathy/status/123", "https://x.com/karpathy/status/123"),
-        ("https://www.x.com/karpathy/status/123", "https://x.com/karpathy/status/123"),
+        ("https://twitter.com/karpathy/status/123?s=20", "https://x.com/i/status/123"),
+        ("https://mobile.twitter.com/karpathy/status/123", "https://x.com/i/status/123"),
+        ("https://www.x.com/someone_else/status/123/photo/1", "https://x.com/i/status/123"),
+        ("https://x.com/karpathy", "https://x.com/karpathy"),
         ("https://youtu.be/abc123?t=10", "https://youtube.com/watch?v=abc123&t=10"),
         # cosmetic: scheme, www, fragment, trailing slash, missing scheme
         ("http://www.Example.com/a/#section", "https://example.com/a"),

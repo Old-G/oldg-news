@@ -39,6 +39,9 @@ def canonical_url(url: str) -> str:
 
     if host in ("twitter.com", "x.com"):
         host = "x.com"
+        if m := re.match(r"^/\w+/status(?:es)?/(\d+)", path):
+            # any handle opens the post, so the id alone identifies it
+            path, query = f"/i/status/{m.group(1)}", []
     elif host == "youtu.be" and path:
         host, path, query = "youtube.com", "/watch", [("v", path.lstrip("/")), *query]
     elif host in ("arxiv.org", "export.arxiv.org") and (m := re.match(rf"^/(?:abs|pdf|html)/{ARXIV_ID}(?:\.pdf)?$", path)):

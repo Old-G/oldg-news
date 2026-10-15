@@ -31,10 +31,10 @@ def _meta(page: str, *names: str) -> str | None:
 async def describe(http: httpx.AsyncClient, url: str) -> tuple[str | None, str | None]:
     """Title and short text of a page; X posts go through fxtwitter. Never raises."""
     try:
-        if m := re.match(r"https://x\.com/(\w+)/status/(\d+)", url):
-            r = await http.get(f"https://api.fxtwitter.com/{m.group(1)}/status/{m.group(2)}")
+        if m := re.match(r"https://x\.com/i/status/(\d+)", url):
+            r = await http.get(f"https://api.fxtwitter.com/i/status/{m.group(1)}")
             t = r.json()["tweet"]
-            return f"@{t['author']['screen_name']}: {t['text'][:80]}", t["text"]
+            return f"@{t['author']['screen_name']}: " + re.sub(r"\s+", " ", t["text"])[:80], t["text"]
         async with http.stream("GET", url) as r:
             body = b""
             async for chunk in r.aiter_bytes():
