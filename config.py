@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     tg_pause_min_s: float = 0.5
     tg_pause_max_s: float = 1.0
     tg_floodwait_retries: int = 3
+    github_every_h: int = 22  # github_search runs about once a day (fetch is every 2 h)
     feed_max_age_h: int = 48  # older feed entries and undated ones are not news
     http_timeout_s: float = 30.0
     short_link_timeout_s: float = 5.0

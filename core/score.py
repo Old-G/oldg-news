@@ -12,7 +12,7 @@ from core.llm import Usage, complete_json, load_prompt, render
 log = logging.getLogger(__name__)
 PAPER_KINDS = {"arxiv", "hf_papers"}
 # sources where a story shows up before the Telegram channels pick it up; 'github' = an rss feed on github.com
-EARLY_KINDS = {"hn", "hf_papers", "arxiv", "github"}
+EARLY_KINDS = {"hn", "hf_papers", "arxiv", "github", "github_search", "hf_trending"}
 HEAT_CAP = 8
 
 

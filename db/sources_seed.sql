@@ -69,5 +69,10 @@ insert into sources (kind, external_id, title, weight) values
   -- release notes: one page, every new dated section is an item (#sections; OpenAI's changelog answers 403)
   ('page_watch', 'https://platform.claude.com/docs/en/release-notes/overview#sections', 'Claude Platform release notes', 1.3),
   ('page_watch', 'https://ai.google.dev/gemini-api/docs/changelog#sections', 'Gemini API changelog', 1.3),
-  ('rss', 'https://mistral.ai/news/rss', 'Mistral AI News', 1.3)
+  ('rss', 'https://mistral.ai/news/rss', 'Mistral AI News', 1.3),
+  -- code and models gaining attention (spec tier «Исследования и код»)
+  ('github_search', 'topics:llm,ai-agents,agent,mcp,claude-code;min_stars:100', 'GitHub: звёзды за неделю', 1.2),
+  ('hf_trending', 'https://huggingface.co/api/trending?type=model&limit=20', 'HF trending models', 1.2),
+  ('hf_trending', 'https://huggingface.co/api/trending?type=dataset&limit=20', 'HF trending datasets', 1.2),
+  ('hf_trending', 'https://huggingface.co/api/trending?type=space&limit=20', 'HF trending spaces', 1.2)
 on conflict (kind, external_id) do nothing;

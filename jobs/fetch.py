@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from telethon import utils
 
-from adapters import RawItem, imap, page_watch, rss, telegram
+from adapters import RawItem, github_search, hf_trending, imap, page_watch, rss, telegram
 from config import get_settings
 from core import cluster, embed, normalize
 from core.llm import make_client
@@ -78,6 +78,20 @@ async def fetch_telegram(conn, stats: dict, http: httpx.AsyncClient) -> None:
         await client.disconnect()
 
 
+CURSOR_KINDS = {"page_watch", "hf_trending", "github_search"}  # emit what is new since the state kept in the cursor
+
+
+async def fetch_cursor_source(http: httpx.AsyncClient, src, max_age_h: int) -> tuple[list[RawItem], str, dict]:
+    if src.kind == "hf_trending":
+        return await hf_trending.fetch(http, src.external_id, src.cursor, src.external_id)
+    if src.kind == "github_search":
+        return await github_search.fetch(http, src.external_id, src.cursor, src.external_id)
+    if src.external_id.endswith(page_watch.SECTIONS):
+        return await page_watch.fetch_sections(http, src.external_id, src.cursor, max_age_h, src.external_id,
+                                               src.title or "Release notes")
+    return await page_watch.fetch(http, src.external_id, src.cursor, max_age_h, src.external_id)
+
+
 async def fetch_feeds(conn, stats: dict, http: httpx.AsyncClient) -> None:
     s = get_settings()
     st = stats["feeds"]
@@ -85,20 +99,18 @@ async def fetch_feeds(conn, stats: dict, http: httpx.AsyncClient) -> None:
     for src in queries.feed_sources(conn):
         st["sources"] += 1
         try:
-            if src.kind == "page_watch":
-                # its URLs are canonical already; release-notes sections keep their #anchor on purpose
-                if src.external_id.endswith(page_watch.SECTIONS):
-                    fresh, cursor, got = await page_watch.fetch_sections(
-                        http, src.external_id, src.cursor, s.feed_max_age_h, src.external_id, src.title or "Release notes")
-                else:
-                    fresh, cursor, got = await page_watch.fetch(http, src.external_id, src.cursor, s.feed_max_age_h, src.external_id)
+            if src.kind in CURSOR_KINDS:
+                if src.kind == "github_search" and src.fetched_at and src.fetched_at > datetime.now(timezone.utc) - timedelta(hours=s.github_every_h):
+                    continue  # once a day: the search counts stars over a week
+                # their URLs are canonical already; release-notes sections keep their #anchor on purpose
+                fresh, cursor, got = await fetch_cursor_source(http, src, s.feed_max_age_h)
                 new = queries.insert_items(conn, src.id, fresh)
                 queries.update_source_cursor(conn, src.id, cursor)
                 conn.commit()
-                st.setdefault("page_watch", {})[src.title or src.external_id] = got
+                st.setdefault(src.kind, {})[src.title or src.external_id] = got
                 st["items_seen"] += len(fresh)
                 st["items_new"] += new
-                st["by_kind"]["page_watch"] = st["by_kind"].get("page_watch", 0) + new
+                st["by_kind"][src.kind] = st["by_kind"].get(src.kind, 0) + new
                 continue
             items = await rss.fetch(http, src.kind, src.external_id, src.external_id)
             fresh = [it for it in items if it.published_at and it.published_at >= since]

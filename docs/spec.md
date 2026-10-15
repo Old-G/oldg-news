@@ -115,8 +115,8 @@ radar/
 | --- | --- | --- |
 | arXiv cs.AI, cs.CL, cs.LG | rss | `rss.arxiv.org/rss/<cat>`, только после prefilter |
 | HF daily papers | hf\_papers | `huggingface.co/api/daily_papers` |
-| HF trending models / datasets / spaces | hf\_trending | `huggingface.co/api/models?sort=trending&limit=50`, то же для datasets и spaces |
-| GitHub — скорость звёзд | github\_search | Search API: `stars:>100 created:>{7 дней} topic:llm OR agents OR mcp`, раз в день |
+| HF trending models / datasets / spaces | hf\_trending | `huggingface.co/api/trending?type=model&limit=20`, то же для `dataset` и `space` (лимит API — 20; `api/models?sort=trending` с 2026 отвечает 400); item — когда репозиторий впервые попал в список, текст моделей и датасетов — из README |
+| GitHub — скорость звёзд | github\_search | Search API: `stars:>100 created:>{7 дней} topic:<тема>`, по запросу на тему (`llm`, `ai-agents`, `agent`, `mcp`, `claude-code`; `topic:agents` пуст), раз в день (`GITHUB_EVERY_H`); item — когда репозиторий впервые попал в выдачу |
 | Semantic Scholar — цитирования свежих работ по тегам | rss / API | по ключевым словам, еженедельно; v1.1 |
 
 Люди и сообщества — вес 1.0:
@@ -152,7 +152,7 @@ create extension if not exists vector;
 -- Источники
 create table sources (
   id               bigserial primary key,
-  kind             text not null check (kind in ('telegram','rss','hf_papers','hn','arxiv','manual','imap','page_watch')),
+  kind             text not null check (kind in ('telegram','rss','hf_papers','hn','arxiv','manual','imap','page_watch','github_search','hf_trending')),
   external_id      text not null,              -- tg channel id / URL фида / 'manual'
   title            text,
   weight           real not null default 1.0,  -- доверие к источнику, 0.5–1.5
@@ -345,7 +345,7 @@ Job'ы по расписанию: `fetch` каждые 2 часа (шаги 1–
    - `src_w` = средний `weight` источников истории, нормированный к 0–1: `(avg − 0.5) / 1.0`, с отсечкой в [0, 1]
    - `final = 0.6 * llm_score/10 + 0.25 * heat_norm + 0.15 * src_w`
    - штраф `-0.15`, если у истории уже есть `down`; `+0.1`, если `up`.
-   - `is_early_signal = heat ≤ 2 and llm_score ≥ 7 and источник ∈ {hn, hf_papers, arxiv, github}` — новое, ещё не подхваченное каналами.
+   - `is_early_signal = heat ≤ 2 and llm_score ≥ 7 and источник ∈ {hn, hf_papers, arxiv, github (релизы и github_search), hf_trending}`, и среди источников нет Telegram — новое, ещё не подхваченное каналами.
 8. **Select.** Отбор: top по `final` с ограничением ≤ `MAX_PER_CATEGORY` (2) на категорию, всего `DIGEST_N` (старт 6), section `top`; ручные `/add` идут первыми и в лимит не входят. Плюс до `EARLY_N` (3) историй с `is_early_signal` из не попавших в top — section `early`. Создать `digests` + `digest_entries`, выбранным историям `status = 'digested'`. Отбор делается один раз в день; не выбранные остаются `new` ещё сутки — могут набрать heat и попасть завтра; старше 48 часов → `dismissed`.
 9. **Articles + overview.** Для каждой выбранной истории без `article`: собрать материалы → промпт `article_ru` сильной моделью → JSON `{title, lead, details[], why_it_matters, try, caveats}` в `stories.article` (+ `article_model`, `article_at`). Материалы истории, первым — основной источник:
    - основная ссылка (`canonical_url`, если указывает на одну вещь): полный текст страницы через httpx-клиент с защитой от SSRF + trafilatura; GitHub-репозиторий → README (raw); x.com → `api.fxtwitter.com`; arXiv → abstract; t.me и страницы, которые не отдались, — пропускаются, статья пишется по items;

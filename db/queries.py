@@ -48,14 +48,15 @@ class FeedSource:
     kind: str
     external_id: str
     title: str | None
-    cursor: str | None = None  # last_external_id; page_watch keeps its seen links here
+    cursor: str | None = None  # last_external_id; page_watch / hf_trending / github_search keep what they saw here
+    fetched_at: datetime | None = None
 
 
 def feed_sources(conn: psycopg.Connection) -> list[FeedSource]:
     rows = conn.execute(
         """
-        select id, kind, external_id, title, last_external_id from sources
-         where enabled and kind in ('rss', 'arxiv', 'hf_papers', 'hn', 'page_watch')
+        select id, kind, external_id, title, last_external_id, last_fetched_at from sources
+         where enabled and kind in ('rss', 'arxiv', 'hf_papers', 'hn', 'page_watch', 'hf_trending', 'github_search')
          order by kind, id
         """
     ).fetchall()
