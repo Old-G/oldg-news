@@ -62,3 +62,8 @@ update sources set weight = 1.2 where kind = 'telegram' and external_id in (
   '-1002546853359',  -- Никита Велс | AI
   '-1002553901043'   -- Глеб Кудрявцев — мастер AI
 );
+
+-- Feeds that refuse the server's IP
+update sources set enabled = false where kind = 'rss' and external_id in (
+  'https://allenai.org/rss.xml'  -- Ai2: 403 from the datacenter IP, fine from home
+);

@@ -3,8 +3,10 @@
 Parsing is pure (bytes / JSON → RawItem) so it is tested without the network.
 """
 
+import asyncio
 import calendar
 import html
+import ipaddress
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -121,6 +123,9 @@ def parse_hf_papers(data: list[dict], source_key: str) -> list[RawItem]:
 
 async def fetch(client: httpx.AsyncClient, kind: str, url: str, source_key: str) -> list[RawItem]:
     r = await client.get(url)
+    if r.status_code == 429:  # Reddit throttles back-to-back requests: one polite retry
+        await asyncio.sleep(min(float(r.headers.get("retry-after") or 5), 10))
+        r = await client.get(url)
     r.raise_for_status()
     if kind == "hf_papers":
         return parse_hf_papers(r.json(), source_key)
@@ -129,5 +134,28 @@ async def fetch(client: httpx.AsyncClient, kind: str, url: str, source_key: str)
     return parse_feed(r.content, source_key, kind)
 
 
+async def is_public_host(host: str) -> bool:
+    """True only if every address the host resolves to is globally routable."""
+    try:
+        addrs = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+        except OSError:
+            return False
+        addrs = [ipaddress.ip_address(i[4][0]) for i in infos]
+    return bool(addrs) and all(a.is_global for a in addrs)
+
+
+async def _block_private(request: httpx.Request) -> None:
+    # URLs come from strangers' posts and redirects: never let them reach the host's or Docker's
+    # internal network (postgres, localhost, cloud metadata). Runs for every redirect hop too.
+    if request.url.scheme not in ("http", "https") or not await is_public_host(request.url.host):
+        raise httpx.ConnectError(f"blocked non-public address {request.url.host}", request=request)
+
+
 def make_http_client(timeout: float) -> httpx.AsyncClient:
-    return httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, timeout=timeout, follow_redirects=True)
+    return httpx.AsyncClient(
+        headers={"User-Agent": USER_AGENT}, timeout=timeout, follow_redirects=True,
+        event_hooks={"request": [_block_private]},
+    )

@@ -92,7 +92,7 @@ async def fetch_feeds(conn, stats: dict, http: httpx.AsyncClient) -> None:
             if src.kind == "arxiv":
                 # a cross-listed paper shows up in several categories: keep it once
                 seen = queries.existing_urls(conn, "arxiv", [it.url for it in fresh if it.url])
-                st["arxiv_cross_dupes"] += sum(1 for it in fresh if it.url in seen)
+                st["arxiv_already_stored"] += sum(1 for it in fresh if it.url in seen)
                 fresh = [it for it in fresh if it.url not in seen]
             new = queries.insert_items(conn, src.id, fresh)
             newest = max(fresh, key=lambda it: it.published_at, default=None)
@@ -117,7 +117,7 @@ async def main() -> None:
     stats = {
         "telegram": {"channels": 0, "messages_seen": 0, "items_seen": 0, "items_new": 0, "skipped_no_text": 0},
         "feeds": {"sources": 0, "items_seen": 0, "items_new": 0, "too_old": 0, "undated": 0,
-                  "arxiv_cross_dupes": 0, "by_kind": {}},
+                  "arxiv_already_stored": 0, "by_kind": {}},
     }
     errors = []
     async with rss.make_http_client(s.http_timeout_s) as http:

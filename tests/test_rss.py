@@ -1,6 +1,10 @@
+import asyncio
 from datetime import datetime, timezone
 
-from adapters.rss import html_to_text, parse_feed, parse_hf_papers, parse_hn
+import httpx
+
+from adapters.rss import _block_private, html_to_text, is_public_host, parse_feed, parse_hf_papers, parse_hn
+from core.normalize import canonical_urls
 
 ARXIV = b"""<?xml version="1.0"?>
 <rss version="2.0" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -70,3 +74,23 @@ def test_hf_papers_point_to_arxiv():
 
 def test_html_to_text():
     assert html_to_text("<p>a &amp; b</p><p>c</p>") == "a & b\nc"
+
+
+def test_private_addresses_are_blocked():
+    async def run():
+        return {h: await is_public_host(h) for h in
+                ["127.0.0.1", "10.0.0.5", "172.18.0.2", "192.168.1.1", "169.254.169.254", "::1", "localhost", "8.8.8.8"]}
+
+    assert asyncio.run(run()) == {"127.0.0.1": False, "10.0.0.5": False, "172.18.0.2": False, "192.168.1.1": False,
+                                  "169.254.169.254": False, "::1": False, "localhost": False, "8.8.8.8": True}
+
+
+def test_redirect_to_private_address_keeps_short_link():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(301, headers={"location": "http://169.254.169.254/latest/meta-data"})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), event_hooks={"request": [_block_private]}) as c:
+            return await canonical_urls(["https://bit.ly/evil"], c)
+
+    assert asyncio.run(run()) == ["https://bit.ly/evil"]

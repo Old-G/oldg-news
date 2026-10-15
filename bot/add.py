@@ -59,7 +59,7 @@ def build_router(owner_id: int) -> Router:
     async def add(message: Message, command: CommandObject) -> None:
         url = (command.args or "").split()[0] if command.args else ""
         if not url:
-            await message.answer("Формат: /add <url>")
+            await message.answer("Формат: /add &lt;url&gt;")
             return
         s = get_settings()
         async with rss.make_http_client(s.http_timeout_s) as http:
