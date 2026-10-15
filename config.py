@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     database_url: str
 
+    # Newsletter mailbox (IMAP adapter): forwarded Medium Daily Digest
+    imap_host: str = "imap.gmail.com"
+    imap_user: str = ""
+    imap_password: str = ""
+
     # OpenAI
     openai_api_key: str = ""
     embed_model: str = ""
