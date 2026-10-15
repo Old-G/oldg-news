@@ -81,6 +81,7 @@ radar/
 | HF papers | `https://huggingface.co/api/daily_papers` (JSON) | 20–40 | есть upvotes — идёт в raw, в v1 не влияет на score |
 | Hacker News | `hnrss.org/frontpage` или Firebase API `topstories` с фильтром score ≥ 100 | 30–60 | url = внешняя ссылка, не обсуждение; обсуждение кладём в `urls` |
 | arXiv | RSS `rss.arxiv.org/rss/cs.AI`, `cs.CL`, `cs.LG` | 300–600 | только abstract; в LLM попадает лишь после prefilter по эмбеддингам |
+| Почта (IMAP) | отдельный ящик (`IMAP_USER`), куда фильтр Gmail пересылает Medium Daily Digest; читается в каждом `fetch`, курсор — последний UID | 10–15 статей | персональные рекомендации Medium («For you»), которых нет ни в одном фиде; из письма берутся ссылка, заголовок и подзаголовок, текст статьи — на шаге 9; основной почтовый ящик Radar не видит |
 | Ручной ввод | команда `/add <url>` в боте, форвард в канал-заметки | единицы | `/add` создаёт item с `source = manual` и сразу тянет историю в ближайшую волну сегодняшнего дайджеста |
 
 Правила для Telegram-адаптера:
@@ -151,7 +152,7 @@ create extension if not exists vector;
 -- Источники
 create table sources (
   id               bigserial primary key,
-  kind             text not null check (kind in ('telegram','rss','hf_papers','hn','arxiv','manual')),
+  kind             text not null check (kind in ('telegram','rss','hf_papers','hn','arxiv','manual','imap')),
   external_id      text not null,              -- tg channel id / URL фида / 'manual'
   title            text,
   weight           real not null default 1.0,  -- доверие к источнику, 0.5–1.5

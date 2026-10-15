@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from telethon import utils
 
-from adapters import RawItem, rss, telegram
+from adapters import RawItem, imap, rss, telegram
 from config import get_settings
 from core import cluster, embed, normalize
 from core.llm import make_client
@@ -109,6 +109,29 @@ async def fetch_feeds(conn, stats: dict, http: httpx.AsyncClient) -> None:
         st["by_kind"][src.kind] = st["by_kind"].get(src.kind, 0) + new
 
 
+async def fetch_mail(conn, stats: dict, http: httpx.AsyncClient) -> None:
+    """Newsletters forwarded to the IMAP mailbox (Medium Daily Digest); off while IMAP_USER is empty."""
+    s = get_settings()
+    st = stats["mail"]
+    if not (s.imap_user and s.imap_password):
+        st["note"] = "IMAP_USER / IMAP_PASSWORD not set"
+        return
+    src = queries.upsert_source(conn, "imap", f"imap:{s.imap_user}", "Medium Daily Digest (почта)")
+    conn.commit()
+    if not src.enabled:
+        return
+    last = int(src.last_external_id) if src.last_external_id else None
+    items, newest, got = await asyncio.to_thread(
+        imap.fetch, s.imap_host, s.imap_user, s.imap_password, last, s.imap_first_days, src.id
+    )
+    st.update(got)
+    await canonicalize(items, http)
+    st["items_seen"] = len(items)
+    st["items_new"] = queries.insert_items(conn, src.id, items)
+    queries.update_source_cursor(conn, src.id, str(newest) if newest else None)
+    conn.commit()
+
+
 def normalize_pending(conn, batch: int = 500) -> dict:
     """Clean text, pick the main link, language, ads. Marks an item done by setting lang; safe to rerun."""
     stats = {"normalized": 0, "ads": 0}
@@ -145,10 +168,11 @@ async def run() -> list[str]:
         "telegram": {"channels": 0, "messages_seen": 0, "items_seen": 0, "items_new": 0, "skipped_no_text": 0},
         "feeds": {"sources": 0, "items_seen": 0, "items_new": 0, "too_old": 0, "undated": 0,
                   "arxiv_already_stored": 0, "by_kind": {}},
+        "mail": {},
     }
     errors = []
     async with rss.make_http_client(s.http_timeout_s) as http:
-        for name, part in (("telegram", fetch_telegram), ("feeds", fetch_feeds)):
+        for name, part in (("telegram", fetch_telegram), ("feeds", fetch_feeds), ("mail", fetch_mail)):
             try:
                 await part(conn, stats, http)
             except Exception as e:
@@ -156,7 +180,7 @@ async def run() -> list[str]:
                 conn.rollback()
                 log.exception("%s failed", name)
                 errors.append(f"{name}: {e!r}")
-    stats["items_new"] = stats["telegram"]["items_new"] + stats["feeds"]["items_new"]
+    stats["items_new"] = stats["telegram"]["items_new"] + stats["feeds"]["items_new"] + stats["mail"].get("items_new", 0)
 
     async def run_stage(name: str) -> dict:
         if name == "normalize":
