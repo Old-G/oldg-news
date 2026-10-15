@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     enrich_text_chars: int = 2000
     article_source_chars: int = 20_000
     draft_source_chars: int = 6_000  # the «best source excerpt» of the draft prompts
-    drafts_en: bool = False  # EN drafts for X and LinkedIn; off: for now only the RU Telegram channel (Gleb, 15.10)
+    drafts_en: bool = True  # EN drafts for X and LinkedIn next to the RU one
     drafts_poll_s: int = 60  # the worker looks for new ⭐ this often
     drafts_window_h: int = 72  # a ⭐ older than this without drafts is not picked up any more
     stale_after_h: int = 48  # unselected stories older than this → dismissed

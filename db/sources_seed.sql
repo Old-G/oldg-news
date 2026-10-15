@@ -53,5 +53,11 @@ insert into sources (kind, external_id, title, weight) values
   ('rss', 'https://pub.towardsai.net/feed', 'Towards AI', 1.0),
   ('rss', 'https://ai.gopubby.com/feed', 'AI Advances', 1.0),
   ('rss', 'https://generativeai.pub/feed', 'Generative AI', 1.0),
-  ('rss', 'https://ai.plainenglish.io/feed', 'AI in Plain English', 1.0)
+  ('rss', 'https://ai.plainenglish.io/feed', 'AI in Plain English', 1.0),
+  -- Medium publications and authors Gleb saves most to the notes channel (counted 2026-10-15)
+  ('rss', 'https://medium.com/feed/data-science-collective', 'Data Science Collective', 1.0),
+  ('rss', 'https://medium.com/feed/coding-nexus', 'Coding Nexus', 1.0),
+  ('rss', 'https://medium.com/feed/@joe.njenga', 'Joe Njenga', 1.0),
+  ('rss', 'https://medium.com/feed/@Micheal-Lanham', 'Micheal Lanham', 1.0),
+  ('rss', 'https://medium.com/feed/@visrow', 'Vishal Mysore', 1.0)
 on conflict (kind, external_id) do nothing;
