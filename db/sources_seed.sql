@@ -66,5 +66,8 @@ insert into sources (kind, external_id, title, weight) values
   ('page_watch', 'https://www.anthropic.com/engineering', 'Anthropic Engineering', 1.3),
   ('page_watch', 'https://ai.meta.com/blog/', 'Meta AI Blog', 1.3),
   ('page_watch', 'https://cohere.com/blog', 'Cohere Blog', 1.3),
+  -- release notes: one page, every new dated section is an item (#sections; OpenAI's changelog answers 403)
+  ('page_watch', 'https://platform.claude.com/docs/en/release-notes/overview#sections', 'Claude Platform release notes', 1.3),
+  ('page_watch', 'https://ai.google.dev/gemini-api/docs/changelog#sections', 'Gemini API changelog', 1.3),
   ('rss', 'https://mistral.ai/news/rss', 'Mistral AI News', 1.3)
 on conflict (kind, external_id) do nothing;

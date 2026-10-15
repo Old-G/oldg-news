@@ -105,7 +105,7 @@ radar/
 | Источник | Адаптер | Как |
 | --- | --- | --- |
 | Блоги OpenAI, Anthropic, Google DeepMind, Meta AI, Mistral, Cohere, Microsoft Research | rss / page\_watch | RSS там, где есть (Mistral — `/news/rss`); иначе `page_watch`: состояние страницы новостей — набор ссылок на статьи (на том же хосте, ровно на уровень ниже её пути, без tag/category/page), diff с виденными → новые статьи; каждая новая скачивается один раз за заголовком, датой (`article:published_time`, JSON-LD, `<time>`) и текстом; старше `FEED_MAX_AGE_H` — только запоминается; первый прогон лишь запоминает текущие ссылки. Сейчас: Anthropic News и Engineering, Meta AI Blog, Cohere Blog. xAI отдаёт 403 всему, кроме браузера, — не берём |
-| Changelog API: Anthropic, OpenAI, Google AI | page\_watch | diff страницы release notes |
+| Changelog API: Anthropic, OpenAI, Google AI | page\_watch | diff страницы release notes: источник с адресом `…#sections`, состояние — набор разделов с датой в заголовке (h2/h3 с id); каждый новый раздел — отдельный item с якорем в URL, чтобы разделы одной страницы не склеивались. Сейчас: Claude Platform release notes, Gemini API changelog. OpenAI changelog отдаёт 403 — его релизы приходят через OpenAI News RSS |
 | Hugging Face blog | rss | `huggingface.co/blog/feed.xml` |
 | Релизы ключевых репозиториев: MCP SDK, LangGraph, vLLM, llama.cpp, Ollama, Claude Code, OpenAI Agents SDK | rss | `github.com/<org>/<repo>/releases.atom` |
 

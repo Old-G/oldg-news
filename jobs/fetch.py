@@ -86,8 +86,12 @@ async def fetch_feeds(conn, stats: dict, http: httpx.AsyncClient) -> None:
         st["sources"] += 1
         try:
             if src.kind == "page_watch":
-                fresh, cursor, got = await page_watch.fetch(http, src.external_id, src.cursor, s.feed_max_age_h, src.external_id)
-                await canonicalize(fresh, http)
+                # its URLs are canonical already; release-notes sections keep their #anchor on purpose
+                if src.external_id.endswith(page_watch.SECTIONS):
+                    fresh, cursor, got = await page_watch.fetch_sections(
+                        http, src.external_id, src.cursor, s.feed_max_age_h, src.external_id, src.title or "Release notes")
+                else:
+                    fresh, cursor, got = await page_watch.fetch(http, src.external_id, src.cursor, s.feed_max_age_h, src.external_id)
                 new = queries.insert_items(conn, src.id, fresh)
                 queries.update_source_cursor(conn, src.id, cursor)
                 conn.commit()

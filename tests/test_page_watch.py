@@ -78,3 +78,46 @@ def test_first_run_is_a_baseline_then_only_new_fresh_articles():
     items, _, stats = run_fetch({"https://example.ai/news": page2,
                                  "https://example.ai/news/broken": art("Undated", None)}, cursor2)
     assert [i.title for i in items] == ["Undated"] and items[0].published_at > now - timedelta(minutes=1)
+
+
+NOTES = """<html><body>
+<h3 id="_R_x">Cookie settings</h3><p>cookies</p>
+<div><h3 id="october-14-2026">October 14, 2026</h3></div>
+<ul><li>Launched <b>web fetch</b> tool<ul><li>nested detail</li></ul></li><li>Raised limits</li></ul>
+<h4>Models</h4><p>Claude 5.5 is GA.</p>
+<h3 id="october-9-2026">October 9, 2026</h3><p>Deprecated v1 batches.</p>
+<h2 id="other">Older</h2><p>tail</p>
+</body></html>"""
+
+
+def test_sections_split_by_dated_headings_of_one_level():
+    from adapters.page_watch import sections
+    got = sections(NOTES)
+    assert [(a, h, d.date().isoformat()) for a, h, d, _ in got] == [
+        ("october-14-2026", "October 14, 2026", "2026-10-14"), ("october-9-2026", "October 9, 2026", "2026-10-09")]
+    assert got[0][3] == "• Launched web fetch tool nested detail\n• Raised limits\nModels\nClaude 5.5 is GA."
+    assert got[1][3] == "Deprecated v1 batches.\ntail"  # an undated h2 does not start a section
+
+
+def test_release_notes_baseline_then_new_sections_with_anchor_urls():
+    from adapters.page_watch import fetch_sections
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%B %d, %Y").replace(" 0", " ")
+    page1 = '<h2 id="old">October 1, 2026</h2><p>old</p>'
+    page2 = f'<h2 id="new">{today}</h2><li>Gemini 4 Flash GA</li>' + page1
+
+    def go(body, cursor):
+        def handler(req):
+            return httpx.Response(200, text=body)
+
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+                return await fetch_sections(http, "https://www.ai.example/docs/changelog#sections", cursor, 48, "k", "Gemini API")
+        return asyncio.run(run())
+
+    items, cursor, stats = go(page1, None)
+    assert items == [] and json.loads(cursor) == ["old"]
+    items, cursor, stats = go(page2, cursor)
+    assert [(i.url, i.title, i.text) for i in items] == [
+        ("https://ai.example/docs/changelog#new", f"Gemini API: {today}", "• Gemini 4 Flash GA")]
+    assert json.loads(cursor) == ["new", "old"]
