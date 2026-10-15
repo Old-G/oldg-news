@@ -33,10 +33,13 @@ async def main() -> None:
     s = get_settings()
     scheduler = AsyncIOScheduler(timezone=s.digest_tz)
     common = {"max_instances": 1, "coalesce": True, "misfire_grace_time": 1800}
-    scheduler.add_job(run_fetch, CronTrigger(hour=f"*/{s.fetch_every_h}", minute=0), id="fetch", **common)
+    # a CronTrigger built by hand takes the host's zone (UTC in the container), not the scheduler's: pass it
+    tz = s.digest_tz
+    scheduler.add_job(run_fetch, CronTrigger(hour=f"*/{s.fetch_every_h}", minute=0, timezone=tz), id="fetch", **common)
     for wave, hhmm in enumerate(s.digest_waves, 1):
         hour, minute = hhmm.split(":")
-        scheduler.add_job(run_wave, CronTrigger(hour=int(hour), minute=int(minute)), args=[wave], id=f"wave{wave}", **common)
+        trigger = CronTrigger(hour=int(hour), minute=int(minute), timezone=tz)
+        scheduler.add_job(run_wave, trigger, args=[wave], id=f"wave{wave}", **common)
     scheduler.start()
     for job in scheduler.get_jobs():
         log.info("scheduled %s → next %s", job.id, job.next_run_time)
