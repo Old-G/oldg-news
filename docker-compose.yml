@@ -35,5 +35,19 @@ services:
         condition: service_healthy
     mem_limit: 512m
 
+  # long polling; the only process that reads the bot's updates
+  bot:
+    build: .
+    image: radar-worker
+    command: ["python", "-m", "bot.main"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://radar:${POSTGRES_PASSWORD}@postgres:5432/radar
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 256m
+
 volumes:
   pgdata:

@@ -37,6 +37,43 @@ def upsert_source(
     return Source(*row)
 
 
+@dataclass
+class FeedSource:
+    id: int
+    kind: str
+    external_id: str
+    title: str | None
+
+
+def feed_sources(conn: psycopg.Connection) -> list[FeedSource]:
+    rows = conn.execute(
+        """
+        select id, kind, external_id, title from sources
+         where enabled and kind in ('rss', 'arxiv', 'hf_papers', 'hn')
+         order by kind, id
+        """
+    ).fetchall()
+    return [FeedSource(*r) for r in rows]
+
+
+def existing_urls(conn: psycopg.Connection, kind: str, urls: list[str]) -> set[str]:
+    """URLs already stored by any source of this kind (arXiv cross-lists repeat across categories)."""
+    rows = conn.execute(
+        "select i.url from items i join sources s on s.id = i.source_id where s.kind = %s and i.url = any(%s)",
+        (kind, urls),
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def insert_manual_item(conn: psycopg.Connection, source_id: int, item: RawItem) -> tuple[int, bool]:
+    """Returns (item id, created); an already known URL returns the stored item."""
+    inserted = insert_items(conn, source_id, [item])
+    row = conn.execute(
+        "select id from items where source_id = %s and external_id = %s", (source_id, item.external_id)
+    ).fetchone()
+    return row[0], bool(inserted)
+
+
 def insert_items(conn: psycopg.Connection, source_id: int, items: list[RawItem]) -> int:
     """Inserts new items, skips ones already stored; returns how many were new."""
     new = 0
