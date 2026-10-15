@@ -115,3 +115,11 @@ def test_detect_lang():
     assert detect_lang("Anthropic released a new version of the MCP specification") == "en"
     assert detect_lang("🔥🔥🔥") == "und"
     assert detect_lang(None) == "und"
+
+
+def test_medium_rss_tracking_and_tail_are_removed():
+    assert canonical_url("https://pub.towardsai.net/stop-x-ff828a178f52?source=rss----98111c9905da---4") == \
+        "https://pub.towardsai.net/stop-x-ff828a178f52"
+    assert canonical_url("https://example.com/a?source=newsletter") == "https://example.com/a?source=newsletter"
+    assert clean_text("From plan mode to hooks, these patterns help… Continue reading on Towards AI »") == \
+        "From plan mode to hooks, these patterns help…"

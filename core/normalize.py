@@ -35,6 +35,7 @@ def canonical_url(url: str) -> str:
     query = [
         (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
         if not k.lower().startswith("utm_") and k.lower() not in DROP_PARAMS
+        and not (k.lower() == "source" and v.startswith("rss"))  # Medium feeds tag every link with ?source=rss…
     ]
 
     if host in ("twitter.com", "x.com"):
@@ -100,6 +101,7 @@ def primary_url(urls: list[str]) -> str | None:
 # Lines that carry no content: emoji/punctuation only, hashtags/mentions only, «подписывайся» footers
 _JUNK_LINE = re.compile(r"^[\W_]*$", re.U)
 _TAGS_LINE = re.compile(r"^(?:\s*[#@][\w.]+[\s|·•,]*)+$", re.U)
+_CONTINUE = re.compile(r"\s*Continue reading on .{1,80}»\s*$")  # Medium RSS summaries end with it
 _SUBSCRIBE = re.compile(r"подпис(?:ывайтесь|ывайся|аться|ка)|subscribe|наш (?:канал|чат)|👉\s*@", re.I)
 
 
@@ -113,7 +115,9 @@ def clean_text(text: str | None) -> str | None:
             continue
         if len(s) <= 120 and _SUBSCRIBE.search(s):
             continue
-        lines.append(s)
+        s = _CONTINUE.sub("", s)
+        if s:
+            lines.append(s)
     return "\n".join(lines) or None
 
 

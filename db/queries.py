@@ -478,6 +478,12 @@ def latest_digest_of(conn: psycopg.Connection, story_id: int) -> int | None:
     return row[0] if row else None
 
 
+def story_of_message(conn: psycopg.Connection, msg_id: int) -> int | None:
+    """The story a digest post in the channel carries (digest_entries.tg_msg_id)."""
+    row = conn.execute("select story_id from digest_entries where tg_msg_id = %s", (msg_id,)).fetchone()
+    return row[0] if row else None
+
+
 def set_story_status(conn: psycopg.Connection, story_id: int, status: str) -> None:
     conn.execute("update stories set status = %s where id = %s", (status, story_id))
 
