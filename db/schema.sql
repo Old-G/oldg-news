@@ -36,6 +36,9 @@ create table stories (
   status          text not null default 'new' check (status in ('new','digested','starred','dismissed')),
   enriched_at     timestamptz,
   scored_at       timestamptz,
+  article         jsonb,           -- мини-статья RU: {title, lead, details[], why_it_matters, try, caveats}
+  article_model   text,
+  article_at      timestamptz,
   created_at      timestamptz not null default now()
 );
 create index stories_centroid_hnsw on stories using hnsw (centroid vector_cosine_ops);
@@ -69,7 +72,8 @@ create index items_published on items (published_at desc);
 create table digests (
   id            bigserial primary key,
   for_date      date not null unique,
-  header_msg_id bigint,
+  overview      jsonb,                          -- обзор дня RU: {summary, direction}
+  header_msg_id bigint,                         -- пост-обзор в канале
   sent_at       timestamptz,
   created_at    timestamptz not null default now()
 );
@@ -81,6 +85,16 @@ create table digest_entries (
   section     text not null check (section in ('top','early')),
   tg_msg_id   bigint,                         -- сообщение с кнопками
   primary key (digest_id, story_id)
+);
+
+-- Еженедельный пост «Неделя: куда движемся»
+create table weekly_posts (
+  id          bigserial primary key,
+  week_start  date not null unique,           -- понедельник недели
+  body        jsonb not null,                 -- {intro, trends[], watch}
+  model       text,
+  tg_msg_id   bigint,
+  created_at  timestamptz not null default now()
 );
 
 -- Обратная связь
@@ -126,7 +140,7 @@ create table taste_centroids (
 -- Лог запусков
 create table runs (
   id          bigserial primary key,
-  job         text not null,                  -- fetch | daily | weekly_taste
+  job         text not null,                  -- fetch | daily | wave | weekly | weekly_taste
   started_at  timestamptz not null default now(),
   finished_at timestamptz,
   stats       jsonb,                          -- items_new, stories_new, enriched, scored, tokens, usd
