@@ -1,7 +1,8 @@
 -- Feed sources (step 2). Idempotent: an existing source keeps its weight and enabled flag.
 --   docker compose exec -T postgres psql -U radar -d radar -f - < db/sources_seed.sql
 -- Weights follow the spec tiers: primary 1.3, research and code 1.2, people and communities 1.0.
--- Feeds were checked live on 2026-10-15. No RSS (→ page_watch later): Anthropic, Mistral, Meta AI, xAI, Cohere.
+-- Feeds were checked live on 2026-10-15. No RSS → page_watch: Anthropic, Meta AI, Cohere (Mistral has /news/rss;
+-- xAI answers 403 to any client that is not a browser, left out).
 -- Left out on purpose: llama.cpp releases (~10 a day), Qwen GitHub blog (moved), Google Developers (undated).
 
 insert into sources (kind, external_id, title, weight) values
@@ -59,5 +60,11 @@ insert into sources (kind, external_id, title, weight) values
   ('rss', 'https://medium.com/feed/coding-nexus', 'Coding Nexus', 1.0),
   ('rss', 'https://medium.com/feed/@joe.njenga', 'Joe Njenga', 1.0),
   ('rss', 'https://medium.com/feed/@Micheal-Lanham', 'Micheal Lanham', 1.0),
-  ('rss', 'https://medium.com/feed/@visrow', 'Vishal Mysore', 1.0)
+  ('rss', 'https://medium.com/feed/@visrow', 'Vishal Mysore', 1.0),
+  -- labs without a feed: the news page itself, diffed by its article links (adapter page_watch)
+  ('page_watch', 'https://www.anthropic.com/news', 'Anthropic News', 1.3),
+  ('page_watch', 'https://www.anthropic.com/engineering', 'Anthropic Engineering', 1.3),
+  ('page_watch', 'https://ai.meta.com/blog/', 'Meta AI Blog', 1.3),
+  ('page_watch', 'https://cohere.com/blog', 'Cohere Blog', 1.3),
+  ('rss', 'https://mistral.ai/news/rss', 'Mistral AI News', 1.3)
 on conflict (kind, external_id) do nothing;

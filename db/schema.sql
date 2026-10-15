@@ -3,7 +3,7 @@ create extension if not exists vector;
 -- Источники
 create table sources (
   id               bigserial primary key,
-  kind             text not null check (kind in ('telegram','rss','hf_papers','hn','arxiv','manual','imap')),
+  kind             text not null check (kind in ('telegram','rss','hf_papers','hn','arxiv','manual','imap','page_watch')),
   external_id      text not null,              -- tg channel id / URL фида / 'manual'
   title            text,
   weight           real not null default 1.0,  -- доверие к источнику, 0.5–1.5

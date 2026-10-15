@@ -104,7 +104,7 @@ radar/
 
 | Источник | Адаптер | Как |
 | --- | --- | --- |
-| Блоги OpenAI, Anthropic, Google DeepMind, Meta AI, Mistral, Cohere, Microsoft Research | rss / page\_watch | RSS там, где есть; иначе хэш страницы новостей, diff при изменении |
+| Блоги OpenAI, Anthropic, Google DeepMind, Meta AI, Mistral, Cohere, Microsoft Research | rss / page\_watch | RSS там, где есть (Mistral — `/news/rss`); иначе `page_watch`: состояние страницы новостей — набор ссылок на статьи (на том же хосте, ровно на уровень ниже её пути, без tag/category/page), diff с виденными → новые статьи; каждая новая скачивается один раз за заголовком, датой (`article:published_time`, JSON-LD, `<time>`) и текстом; старше `FEED_MAX_AGE_H` — только запоминается; первый прогон лишь запоминает текущие ссылки. Сейчас: Anthropic News и Engineering, Meta AI Blog, Cohere Blog. xAI отдаёт 403 всему, кроме браузера, — не берём |
 | Changelog API: Anthropic, OpenAI, Google AI | page\_watch | diff страницы release notes |
 | Hugging Face blog | rss | `huggingface.co/blog/feed.xml` |
 | Релизы ключевых репозиториев: MCP SDK, LangGraph, vLLM, llama.cpp, Ollama, Claude Code, OpenAI Agents SDK | rss | `github.com/<org>/<repo>/releases.atom` |
@@ -152,7 +152,7 @@ create extension if not exists vector;
 -- Источники
 create table sources (
   id               bigserial primary key,
-  kind             text not null check (kind in ('telegram','rss','hf_papers','hn','arxiv','manual','imap')),
+  kind             text not null check (kind in ('telegram','rss','hf_papers','hn','arxiv','manual','imap','page_watch')),
   external_id      text not null,              -- tg channel id / URL фида / 'manual'
   title            text,
   weight           real not null default 1.0,  -- доверие к источнику, 0.5–1.5

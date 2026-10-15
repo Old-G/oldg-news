@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from telethon import utils
 
-from adapters import RawItem, imap, rss, telegram
+from adapters import RawItem, imap, page_watch, rss, telegram
 from config import get_settings
 from core import cluster, embed, normalize
 from core.llm import make_client
@@ -85,6 +85,17 @@ async def fetch_feeds(conn, stats: dict, http: httpx.AsyncClient) -> None:
     for src in queries.feed_sources(conn):
         st["sources"] += 1
         try:
+            if src.kind == "page_watch":
+                fresh, cursor, got = await page_watch.fetch(http, src.external_id, src.cursor, s.feed_max_age_h, src.external_id)
+                await canonicalize(fresh, http)
+                new = queries.insert_items(conn, src.id, fresh)
+                queries.update_source_cursor(conn, src.id, cursor)
+                conn.commit()
+                st.setdefault("page_watch", {})[src.title or src.external_id] = got
+                st["items_seen"] += len(fresh)
+                st["items_new"] += new
+                st["by_kind"]["page_watch"] = st["by_kind"].get("page_watch", 0) + new
+                continue
             items = await rss.fetch(http, src.kind, src.external_id, src.external_id)
             fresh = [it for it in items if it.published_at and it.published_at >= since]
             st["undated"] += sum(1 for it in items if not it.published_at)
