@@ -1,10 +1,9 @@
 """Step 12 of the pipeline: drafts of his own posts for a ⭐ story — RU for Telegram (prompt `draft_ru`),
-EN for X and LinkedIn (`draft_en`). Strong model; the record is the English story, not the RU article,
+EN for X and LinkedIn (`draft_en`, off unless DRAFTS_EN). Strong model; the record is the English story, not the RU article,
 so the EN posts are written from the record and never read as a translation."""
 
 import re
 
-DRAFT_CHANNELS = (("ru", "tg"), ("en", "x"), ("en", "linkedin"))
 _FENCE = re.compile(r"^```\w*\s*(.*?)\s*```$", re.S)
 
 

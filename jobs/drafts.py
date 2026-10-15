@@ -1,4 +1,5 @@
-"""drafts job: for every ⭐ the owner pressed, three drafts of his own posts to his DM (spec step 12).
+"""drafts job: for every ⭐ the owner pressed, a draft of his own RU Telegram post to his DM (spec step 12);
+with DRAFTS_EN also EN drafts for X and LinkedIn.
 
     python -m jobs.drafts      # handle the pending ⭐ once
 
@@ -29,15 +30,18 @@ _failures: dict[int, int] = {}  # story_id → failed attempts in this process
 
 
 async def write(s: Settings, conn, llm, http, usage: Usage, story_id: int) -> list[tuple[str, str, str]]:
-    """[(lang, channel, text)] for the RU Telegram post, the X post and the LinkedIn post."""
+    """[(lang, channel, text)]: the RU Telegram post; with DRAFTS_EN also the X and the LinkedIn post."""
     card = queries.story_card(conn, story_id)
     links = digest.story_links(card, is_specific_url)
     main = next((u for u in links if is_specific_url(u)), None)
     primary = (main, await article.primary_text(http, main)) if main else None
     values = {"story_record_json": json.dumps(drafts.story_record(card, links), ensure_ascii=False),
               "best_item_text": article.materials(primary, card["items"], s.draft_source_chars)}
-    ru_p, en_p = load_prompt("draft_ru"), load_prompt("draft_en")
+    ru_p = load_prompt("draft_ru")
     ru = drafts.clean_ru(await complete(llm, s, s.strong_model, ru_p.system, render(ru_p.user, **values), usage))
+    if not s.drafts_en:
+        return [("ru", "tg", ru)]
+    en_p = load_prompt("draft_en")
     x, linkedin = drafts.parse_en(
         await complete_json(llm, s, s.strong_model, en_p.system, render(en_p.user, **values), usage))
     return [("ru", "tg", ru), ("en", "x", x), ("en", "linkedin", linkedin)]

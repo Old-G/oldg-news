@@ -54,6 +54,6 @@ def build_router(owner_id: int) -> Router:
             done.add(action)
         # the mark replaces the buttons, so a second press is impossible (spec: «✓ 👍»)
         await cb.message.edit_reply_markup(reply_markup=feedback_keyboard(story_id, done))
-        await cb.answer({"up": "👍 записал", "down": "👎 записал", "star": "⭐ записал, черновики пришлю в личку через минуту"}[action])
+        await cb.answer({"up": "👍 записал", "down": "👎 записал", "star": "⭐ записал, черновик поста пришлю в личку через минуту"}[action])
 
     return router
