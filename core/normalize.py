@@ -138,7 +138,8 @@ def is_ad(text: str | None, urls: list[str], kind: str, own_username: str | None
 def detect_lang(text: str | None, min_score: float = 0.3) -> str:
     if not text or not text.strip():
         return "und"
-    from fast_langdetect import detect  # loads the bundled model on first use
+    from fast_langdetect import LangDetectConfig, detect  # loads the bundled model on first use
 
-    best = detect(" ".join(text.split())[:1000], model="lite", k=1)
+    # the library cuts input to 80 chars by default (and logs it every time); 500 is plenty and still fast
+    best = detect(" ".join(text.split())[:500], config=LangDetectConfig(max_input_length=500, model="lite"), k=1)
     return best[0]["lang"] if best and best[0]["score"] >= min_score else "und"

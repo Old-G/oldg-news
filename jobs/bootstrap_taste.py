@@ -62,7 +62,7 @@ async def bootstrap() -> None:
         conn.commit()
 
         rows = queries.note_items(conn, source_id)
-        vectors = np.array([r[5] for r in rows], dtype=np.float32)
+        vectors = np.array([r[5].to_numpy() for r in rows], dtype=np.float32)
         k = s.taste_k_large if len(rows) >= s.taste_k_large_from else s.taste_k
         centroids, sizes = taste.kmeans(vectors, k)
         stats["centroids"] = {"k": len(centroids), "sizes": sizes.tolist()}
