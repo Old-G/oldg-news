@@ -360,30 +360,97 @@ def activate_taste_profile(conn: psycopg.Connection, version: int, text: str | N
 
 # --- digest ------------------------------------------------------------------
 
-def active_profile_id(conn: psycopg.Connection) -> int | None:
-    row = conn.execute("select id from taste_profiles where is_active").fetchone()
-    return row[0] if row else None
+def active_profile(conn: psycopg.Connection) -> tuple[int, str] | None:
+    """(id, profile_text) of the active taste profile."""
+    row = conn.execute("select id, profile_text from taste_profiles where is_active").fetchone()
+    return (row[0], row[1]) if row else None
 
 
-def digest_candidates(conn: psycopg.Connection, profile_id: int, window_h: int) -> list[tuple]:
-    """(story_id, prefilter_sim, heat, source kinds, has manual item) for new stories seen within the window.
+def ranking_candidates(conn: psycopg.Connection, profile_id: int, window_h: int) -> list[dict]:
+    """New stories seen within the window with what prefilter, score and select need.
 
-    prefilter_sim = max cosine to the active profile's positive centroids (spec: prefilter query).
+    prefilter_sim = max cosine to the active profile's positive centroids (spec: prefilter query);
+    kinds: an rss feed on github.com counts as 'github'; avg_weight over the story's distinct sources.
     """
-    return conn.execute(
+    rows = conn.execute(
         """
         select s.id,
                (select max(1 - (s.centroid <=> c.centroid)) from taste_centroids c
-                 where c.profile_id = %s and c.polarity = 'pos') as sim,
+                 where c.profile_id = %s and c.polarity = 'pos'),
                s.heat,
-               array_agg(distinct src.kind),
-               bool_or(src.kind = 'manual')
+               array_agg(distinct case when src.kind = 'rss' and src.external_id like '%%github.com/%%'
+                                       then 'github' else src.kind end),
+               bool_or(src.kind = 'manual'),
+               bool_or(src.is_label_source),
+               (select avg(w.weight) from sources w
+                 where w.id in (select source_id from items where story_id = s.id)),
+               s.enriched_at is not null, s.category, s.llm_score,
+               array(select distinct f.action from feedback f where f.story_id = s.id and f.origin = 'bot')
           from stories s join items i on i.story_id = s.id join sources src on src.id = i.source_id
          where s.status = 'new' and s.last_seen_at > now() - make_interval(hours => %s)
          group by s.id
         """,
         (profile_id, window_h),
     ).fetchall()
+    keys = ("story_id", "sim", "heat", "kinds", "manual", "notes", "avg_weight", "enriched", "category",
+            "llm_score", "owner_actions")
+    return [dict(zip(keys, r)) for r in rows]
+
+
+def enrich_inputs(conn: psycopg.Connection, story_ids: list[int]) -> list[tuple]:
+    """(id, title, canonical_url, heat, longest item text, all item urls, source kinds)."""
+    return conn.execute(
+        """
+        select s.id, s.title, s.canonical_url, s.heat,
+               (select i.text from items i where i.story_id = s.id and not i.is_ad
+                 order by length(coalesce(i.text, '')) desc limit 1),
+               array(select u from items i, unnest(array_prepend(i.url, i.urls)) u
+                      where i.story_id = s.id and u is not null),
+               array(select distinct src.kind from items i join sources src on src.id = i.source_id
+                      where i.story_id = s.id)
+          from stories s where s.id = any(%s) order by s.id
+        """,
+        (story_ids,),
+    ).fetchall()
+
+
+def set_enriched(conn: psycopg.Connection, rows: list) -> None:
+    """rows: core.enrich.Enriched; an ad is dismissed at once."""
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            update stories set title = %s, summary = %s, why_it_matters = %s, category = %s, tags = %s,
+                   enriched_at = now(), status = case when %s then 'dismissed' else status end
+             where id = %s
+            """,
+            [(r.title_clean, r.summary, r.why_it_matters, r.category, r.tags, r.is_ad, r.story_id) for r in rows],
+        )
+
+
+def score_inputs(conn: psycopg.Connection, story_ids: list[int]) -> list[dict]:
+    rows = conn.execute(
+        """
+        select id, title, summary, why_it_matters, category, tags, heat,
+               round(extract(epoch from now() - first_seen_at) / 3600)::int
+          from stories where id = any(%s) and enriched_at is not null order by id
+        """,
+        (story_ids,),
+    ).fetchall()
+    keys = ("story_id", "title_clean", "summary", "why_it_matters", "category", "tags", "n_sources",
+            "first_seen_hours_ago")
+    return [dict(zip(keys, r)) for r in rows]
+
+
+def set_scores(conn: psycopg.Connection, scores: dict[int, tuple[float, str]]) -> None:
+    with conn.cursor() as cur:
+        cur.executemany("update stories set llm_score = %s, llm_reason = %s, scored_at = now() where id = %s",
+                        [(sc, reason, sid) for sid, (sc, reason) in scores.items()])
+
+
+def set_final_scores(conn: psycopg.Connection, rows: list[tuple[float, bool, int]]) -> None:
+    """rows: (final_score, is_early_signal, story_id)."""
+    with conn.cursor() as cur:
+        cur.executemany("update stories set final_score = %s, is_early_signal = %s where id = %s", rows)
 
 
 def set_prefilter_sims(conn: psycopg.Connection, rows: list[tuple[float, int]]) -> None:
@@ -442,22 +509,69 @@ def set_header_message(conn: psycopg.Connection, digest_id: int, msg_id: int) ->
 def story_card(conn: psycopg.Connection, story_id: int) -> dict:
     """What a digest post needs: story fields plus the items' links and the longest text."""
     st = conn.execute(
-        "select title, heat, canonical_url, summary, why_it_matters, category, tags from stories where id = %s",
+        """
+        select title, heat, canonical_url, summary, why_it_matters, category, tags, article,
+               article_at is null or article_at < last_seen_at
+          from stories where id = %s
+        """,
         (story_id,),
     ).fetchone()
     items = conn.execute(
         """
         select i.title, i.text, i.url, i.urls, i.raw->>'link', src.kind
           from items i join sources src on src.id = i.source_id
-         where i.story_id = %s order by length(coalesce(i.text, '')) desc
+         where i.story_id = %s and not i.is_ad order by length(coalesce(i.text, '')) desc
         """,
         (story_id,),
     ).fetchall()
     return {
         "title": st[0], "heat": st[1], "canonical_url": st[2], "summary": st[3], "why_it_matters": st[4],
-        "category": st[5], "tags": st[6] or [],
+        "category": st[5], "tags": st[6] or [], "article": st[7], "article_stale": st[8],
         "items": [dict(zip(("title", "text", "url", "urls", "tg_link", "kind"), r)) for r in items],
     }
+
+
+def set_article(conn: psycopg.Connection, story_id: int, article: dict, model: str) -> None:
+    conn.execute("update stories set article = %s, article_model = %s, article_at = now() where id = %s",
+                 (Jsonb(article), model, story_id))
+
+
+def digest_overview(conn: psycopg.Connection, digest_id: int) -> dict | None:
+    return conn.execute("select overview from digests where id = %s", (digest_id,)).fetchone()[0]
+
+
+def set_digest_overview(conn: psycopg.Connection, digest_id: int, overview: dict) -> None:
+    conn.execute("update digests set overview = %s where id = %s", (Jsonb(overview), digest_id))
+
+
+def week_articles(conn: psycopg.Connection, start, end) -> list[tuple[dict, list[str]]]:
+    """(article, the owner's actions) for stories published in the channel in digests of [start, end]."""
+    return conn.execute(
+        """
+        select s.article,
+               array(select distinct f.action from feedback f where f.story_id = s.id and f.origin = 'bot')
+          from digest_entries e join digests d on d.id = e.digest_id join stories s on s.id = e.story_id
+         where d.for_date between %s and %s and e.tg_msg_id is not null and s.article is not null
+         order by d.for_date, e.section desc, e.position
+        """,
+        (start, end),
+    ).fetchall()
+
+
+def weekly_post(conn: psycopg.Connection, week_start) -> tuple[dict, int | None] | None:
+    row = conn.execute("select body, tg_msg_id from weekly_posts where week_start = %s", (week_start,)).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def save_weekly_post(conn: psycopg.Connection, week_start, body: dict, model: str) -> None:
+    conn.execute(
+        "insert into weekly_posts (week_start, body, model) values (%s, %s, %s) on conflict (week_start) do nothing",
+        (week_start, Jsonb(body), model),
+    )
+
+
+def set_weekly_message(conn: psycopg.Connection, week_start, msg_id: int) -> None:
+    conn.execute("update weekly_posts set tg_msg_id = %s where week_start = %s", (msg_id, week_start))
 
 
 # --- feedback ----------------------------------------------------------------

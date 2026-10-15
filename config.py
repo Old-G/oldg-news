@@ -75,8 +75,14 @@ class Settings(BaseSettings):
     digest_waves: list[str] = ["07:30", "13:00", "19:00"]  # wave 1 = header + top stories, 2 = the rest, 3 = early signals
     digest_tz: str = "Europe/Minsk"
     wave1_n: int = 3
-    # until step 6 (no llm_score) stories rank by taste similarity plus this much per extra source
+    digest_prepare_at: str = "07:00"  # prefilter → enrich → score → select → mini-articles → overview, before wave 1
+    weekly_post_at: str = "sun 20:00"  # «Неделя: куда движемся», after the evening wave; empty = off
+    # stories the LLM could not score (a failed batch) rank by taste similarity plus this much per extra source
     interim_heat_bonus: float = 0.05
+    enrich_batch: int = 10
+    score_batch: int = 15
+    enrich_text_chars: int = 2000
+    article_source_chars: int = 20_000
     stale_after_h: int = 48  # unselected stories older than this → dismissed
     fetch_every_h: int = 2
     early_n: int = 3

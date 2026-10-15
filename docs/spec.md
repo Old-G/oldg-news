@@ -348,7 +348,7 @@ Job'ы по расписанию: `fetch` каждые 2 часа (шаги 1–
 8. **Select.** Отбор: top по `final` с ограничением ≤ `MAX_PER_CATEGORY` (2) на категорию, всего `DIGEST_N` (старт 6), section `top`; ручные `/add` идут первыми и в лимит не входят. Плюс до `EARLY_N` (3) историй с `is_early_signal` из не попавших в top — section `early`. Создать `digests` + `digest_entries`, выбранным историям `status = 'digested'`. Отбор делается один раз в день; не выбранные остаются `new` ещё сутки — могут набрать heat и попасть завтра; старше 48 часов → `dismissed`.
 9. **Articles + overview.** Для каждой выбранной истории без `article`: собрать материалы → промпт `article_ru` сильной моделью → JSON `{title, lead, details[], why_it_matters, try, caveats}` в `stories.article` (+ `article_model`, `article_at`). Материалы истории, первым — основной источник:
    - основная ссылка (`canonical_url`, если указывает на одну вещь): полный текст страницы через httpx-клиент с защитой от SSRF + trafilatura; GitHub-репозиторий → README (raw); x.com → `api.fxtwitter.com`; arXiv → abstract; t.me и страницы, которые не отдались, — пропускаются, статья пишется по items;
-   - тексты всех items истории (без рекламы и дублей по `content_hash`);
+   - тексты всех items истории (без рекламы и без повторов одного и того же текста);
    - всё вместе обрезается до `ARTICLE_SOURCE_CHARS` (20 000 символов).
 
    Затем обзор дня: промпт `overview_ru` по мини-статьям секции `top` → `{summary, direction}` в `digests.overview`. Готовое не пересчитывается: повторный запуск генерирует только недостающее.
