@@ -1,7 +1,7 @@
 """worker: the scheduler (spec: «Расписание», time of the digest timezone).
 
 fetch at :00 every FETCH_EVERY_H hours; daily preparation at DIGEST_PREPARE_AT, the waves at DIGEST_WAVES,
-the weekly post at WEEKLY_POST_AT. DIGEST_WAVES=[] pauses everything that publishes (and the preparation).
+the weekly post at WEEKLY_POST_AT, ⭐ drafts every DRAFTS_POLL_S seconds. DIGEST_WAVES=[] pauses everything that publishes (and the preparation).
 """
 
 import asyncio
@@ -9,9 +9,10 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from config import get_settings
-from jobs import daily, fetch, weekly
+from jobs import daily, drafts, fetch, weekly
 
 log = logging.getLogger("worker")
 
@@ -36,6 +37,13 @@ async def run_wave(wave: int) -> None:
         log.exception("wave %s failed", wave)  # recorded in runs; the next wave catches up
 
 
+async def run_drafts() -> None:
+    try:
+        await drafts.run()
+    except Exception:
+        log.exception("drafts failed")
+
+
 async def run_weekly() -> None:
     try:
         await weekly.run()
@@ -51,6 +59,8 @@ async def main() -> None:
     # a CronTrigger built by hand takes the host's zone (UTC in the container), not the scheduler's: pass it
     tz = s.digest_tz
     scheduler.add_job(run_fetch, CronTrigger(hour=f"*/{s.fetch_every_h}", minute=0, timezone=tz), id="fetch", **common)
+    # ⭐ → drafts in the owner's DM; runs even when the waves are paused
+    scheduler.add_job(run_drafts, IntervalTrigger(seconds=s.drafts_poll_s, timezone=tz), id="drafts", **common)
 
     def at(hhmm: str, **kw) -> CronTrigger:
         hour, minute = hhmm.split(":")

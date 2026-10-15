@@ -630,3 +630,28 @@ def week_stats(conn: psycopg.Connection) -> dict:
     ).fetchone()
     keys = ("stories", "in_digest", "up", "down", "star", "missed", "audience", "usd")
     return dict(zip(keys, row))
+
+
+# --- drafts ------------------------------------------------------------------
+
+def stars_without_drafts(conn: psycopg.Connection, hours: int) -> list[int]:
+    """Stories the owner starred in the bot within `hours` that have no drafts yet (notes stars never count)."""
+    rows = conn.execute(
+        """
+        select f.story_id from feedback f
+         where f.action = 'star' and f.origin = 'bot' and f.created_at > now() - make_interval(hours => %s)
+           and not exists (select 1 from drafts d where d.story_id = f.story_id)
+         group by f.story_id order by min(f.created_at)
+        """,
+        (hours,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def add_drafts(conn: psycopg.Connection, story_id: int, rows: list[tuple[str, str, str]], model: str) -> None:
+    """rows: (lang, channel, text)."""
+    with conn.cursor() as cur:
+        cur.executemany(
+            "insert into drafts (story_id, lang, channel, text, model) values (%s, %s, %s, %s, %s)",
+            [(story_id, lang, channel, text, model) for lang, channel, text in rows],
+        )
