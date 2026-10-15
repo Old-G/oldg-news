@@ -180,6 +180,7 @@ def items_to_embed(conn: psycopg.Connection, limit: int) -> list[EmbedRow]:
         select id, title, text, url from items
          where embedding is null and lang is not null and not is_ad
            and (coalesce(text, '') <> '' or coalesce(title, '') <> '' or url is not null)
+           and source_id in (select id from sources where enabled)
          order by id limit %s
         """,
         (limit,),
@@ -197,6 +198,7 @@ def set_embeddings(conn: psycopg.Connection, rows: list[tuple[int, np.ndarray]])
 @dataclass
 class ClusterRow:
     id: int
+    source_id: int
     url: str | None
     title: str | None
     published_at: datetime | None
@@ -207,41 +209,48 @@ class ClusterRow:
 def items_to_cluster(conn: psycopg.Connection) -> list[ClusterRow]:
     rows = conn.execute(
         """
-        select i.id, i.url, i.title, i.published_at, i.embedding, s.is_label_source
+        select i.id, i.source_id, i.url, i.title, i.published_at, i.embedding, s.is_label_source
           from items i join sources s on s.id = i.source_id
-         where i.story_id is null and i.embedding is not null
+         where i.story_id is null and i.embedding is not null and s.enabled
          order by i.published_at nulls last, i.id
         """
     ).fetchall()
     return [ClusterRow(*r) for r in rows]
 
 
-def story_by_url(conn: psycopg.Connection, url: str, embedding: np.ndarray, days: int) -> tuple[int, float] | None:
+_SAME_SOURCE = "exists (select 1 from items m where m.story_id = st.id and m.source_id = %s)"
+
+
+def story_by_url(
+    conn: psycopg.Connection, url: str, embedding: np.ndarray, source_id: int, days: int
+) -> tuple[int, float, bool] | None:
     row = conn.execute(
-        """
-        select s.id, 1 - (s.centroid <=> %s) as sim
-          from items i join stories s on s.id = i.story_id
-         where i.url = %s and s.last_seen_at > now() - make_interval(days => %s)
+        f"""
+        select st.id, 1 - (st.centroid <=> %s) as sim, {_SAME_SOURCE}
+          from items i join stories st on st.id = i.story_id
+         where i.url = %s and st.last_seen_at > now() - make_interval(days => %s)
          order by sim desc limit 1
         """,
-        (embedding, url, days),
+        (embedding, source_id, url, days),
     ).fetchone()
-    return (row[0], row[1]) if row else None
+    return (row[0], row[1], row[2]) if row else None
 
 
-def nearest_stories(conn: psycopg.Connection, embedding: np.ndarray, days: int) -> list[tuple[int, float]]:
+def nearest_stories(
+    conn: psycopg.Connection, embedding: np.ndarray, source_id: int, days: int
+) -> list[tuple[int, float, bool]]:
     """The spec's story search: three nearest centroids among stories seen within `days`."""
     return [
-        (r[0], r[1])
+        (r[0], r[1], r[2])
         for r in conn.execute(
-            """
-            select id, 1 - (centroid <=> %s) as sim
-              from stories
-             where last_seen_at > now() - make_interval(days => %s)
-             order by centroid <=> %s
-             limit 3
+            f"""
+            select st.id, st.sim, {_SAME_SOURCE}
+              from (select id, 1 - (centroid <=> %s) as sim from stories
+                     where last_seen_at > now() - make_interval(days => %s)
+                     order by centroid <=> %s limit 3) st
+             order by st.sim desc
             """,
-            (embedding, days, embedding),
+            (source_id, embedding, days, embedding),
         ).fetchall()
     ]
 

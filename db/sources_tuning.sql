@@ -22,7 +22,12 @@ update sources set enabled = false where kind = 'telegram' and external_id in (
   '-1001319585796',  -- CoinMarketCap: New Listings Notifications
   '-1001591872543',  -- NFTime Announcements
   '-1001861308806',  -- Nifty NFT
-  '-1001821068055'   -- Unibot Entry Portal
+  '-1001821068055',  -- Unibot Entry Portal
+  -- found while checking story merges (step 3)
+  '-1001212971434',  -- KEEP IT STREET (sticker/car shop)
+  '-1001693510673',  -- 🪬Taro | Телец
+  '-1001905831364',  -- Ретроградный меркурий
+  '-1003122696069'   -- LH AI Monitoring (work alerts, not news)
 );
 
 -- Crypto / trading: kept for AI-in-markets stories, but low trust
@@ -47,7 +52,8 @@ update sources set weight = 0.5 where kind = 'telegram' and external_id in (
   '-1001353331991',  -- КриптоБезумие
   '-1001414438746',  -- Маришка инвестирует
   '-1001570859949',  -- Мой путь к 1🍋$ в крипте
-  '-1002084116026'   -- Трейдерские заметки | Профессор Клинков
+  '-1002084116026',  -- Трейдерские заметки | Профессор Клинков
+  '-1001448621840'   -- Whitelist Media
 );
 
 -- Channels most forwarded into notes over the last 12 months

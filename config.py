@@ -43,7 +43,12 @@ class Settings(BaseSettings):
     embed_usd_per_mtok: float = 0.13  # price of EMBED_MODEL per 1M tokens (text-embedding-3-large), for runs.stats
 
     # Thresholds
-    cluster_sim: float = 0.86
+    # 0.86 in the spec's table; text-embedding-3-large at 1536 dims puts cross-source duplicates at 0.80–0.86
+    # (checked on 2.3k items, 2026-10-15)
+    cluster_sim: float = 0.80
+    # a story that already holds an item of the same source takes another one only if it is a near-verbatim repeat:
+    # one channel's daily templates (horoscopes, vacancies, results) are 0.95+ alike but are different stories
+    same_source_sim: float = 0.98
     # an exact shared URL still needs this similarity to glue: a popular repo link alone must not merge unrelated posts
     url_match_min_sim: float = 0.5
     story_match_days: int = 7

@@ -16,18 +16,27 @@ class Decision:
     reason: str  # url | sim | new
 
 
+Candidate = tuple[int, float, bool]  # story id, similarity, story already holds an item of this source
+
+
 def decide(
-    url_match: tuple[int, float] | None,
-    neighbors: list[tuple[int, float]],
+    url_match: Candidate | None,
+    neighbors: list[Candidate],
     cluster_sim: float,
     url_min_sim: float,
+    same_source_sim: float,
 ) -> Decision:
-    """url_match: (story id, similarity) of a story sharing the item's exact URL;
-    neighbors: (story id, similarity) of the nearest stories, best first."""
-    if url_match and url_match[1] >= url_min_sim:
+    """url_match: a story sharing the item's exact URL; neighbors: the nearest stories, best first."""
+
+    def allowed(c: Candidate, threshold: float) -> bool:
+        _, sim, same_source = c
+        return sim >= threshold and (not same_source or sim >= same_source_sim)
+
+    if url_match and allowed(url_match, url_min_sim):
         return Decision(url_match[0], "url")
-    if neighbors and neighbors[0][1] >= cluster_sim:
-        return Decision(neighbors[0][0], "sim")
+    for c in neighbors:
+        if allowed(c, cluster_sim):
+            return Decision(c[0], "sim")
     return Decision(None, "new")
 
 
@@ -39,9 +48,9 @@ def cluster_pending(conn, s: Settings) -> dict:
     for it in queries.items_to_cluster(conn):
         url_match = None
         if is_specific_url(it.url):
-            url_match = queries.story_by_url(conn, it.url, it.embedding, s.story_match_days)
-        neighbors = queries.nearest_stories(conn, it.embedding, s.story_match_days)
-        d = decide(url_match, neighbors, s.cluster_sim, s.url_match_min_sim)
+            url_match = queries.story_by_url(conn, it.url, it.embedding, it.source_id, s.story_match_days)
+        neighbors = queries.nearest_stories(conn, it.embedding, it.source_id, s.story_match_days)
+        d = decide(url_match, neighbors, s.cluster_sim, s.url_match_min_sim, s.same_source_sim)
         if d.story_id:
             queries.attach_item(conn, it.id, d.story_id)
             story_id = d.story_id
