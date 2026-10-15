@@ -786,3 +786,33 @@ def create_missed_story(conn: psycopg.Connection, url: str) -> int:
         " values (%s, %s, now(), now(), 'dismissed') returning id",
         (url, url),
     ).fetchone()[0]
+
+
+# --- channel review page (tools/channels_page.html) ---------------------------
+
+def channel_review(conn: psycopg.Connection) -> list[dict]:
+    """Every Telegram subscription but the notes channel: enabled, posts and ads over 7 days, the average
+    taste similarity of its stories, stories close to the taste (≥ 0.45), and how often the owner
+    forwarded from it to the notes channel (with the last time)."""
+    rows = conn.execute(
+        """
+        with fwd as (
+          select raw->>'fwd_from_channel_id' cid, count(*) n, max(i.published_at)::date last_fwd
+            from items i join sources s on s.id = i.source_id
+           where s.is_label_source and raw->>'fwd_from_channel_id' is not null group by 1
+        ), wk as (
+          select i.source_id, count(*) items_7d, count(*) filter (where i.is_ad) ads_7d,
+                 round(avg(st.prefilter_sim)::numeric, 3) avg_sim,
+                 count(distinct i.story_id) filter (where st.prefilter_sim >= 0.45) close_7d
+            from items i left join stories st on st.id = i.story_id
+           where i.fetched_at > now() - interval '7 days' group by 1
+        )
+        select s.id, s.title, s.enabled, coalesce(wk.items_7d, 0), coalesce(wk.ads_7d, 0), wk.avg_sim,
+               coalesce(wk.close_7d, 0), coalesce(fwd.n, 0), fwd.last_fwd
+          from sources s left join wk on wk.source_id = s.id left join fwd on '-100' || fwd.cid = s.external_id
+         where s.kind = 'telegram' and not s.is_label_source
+         order by 4 desc, s.id
+        """
+    ).fetchall()
+    keys = ("id", "t", "on", "n", "ads", "sim", "close", "fwd", "last")
+    return [dict(zip(keys, r)) for r in rows]

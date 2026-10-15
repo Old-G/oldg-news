@@ -1,0 +1,161 @@
+<title>Каналы Radar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one working column — summary, filters, then a dense channel list read like a mixing desk: switch left, numbers right. */
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --ink: #14202b; --muted: #5d6b78; --line: #dde3e9;
+  --accent: #1f6f8b; --accent-soft: #e2f0f5; --off: #9aa6b1; --warn: #b4531c; --warn-soft: #fbeee5; --good: #2f7a4b; --good-soft: #e5f3ea;
+  --f-body: "Golos Text", "Segoe UI", system-ui, sans-serif; --f-num: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151b; --surface: #161e26; --ink: #e6edf3; --muted: #93a2b1; --line: #26313c;
+  --accent: #5fb3d1; --accent-soft: #15303b; --off: #5d6b78; --warn: #f0995c; --warn-soft: #3a2416; --good: #6cc48d; --good-soft: #17301f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #161e26; --ink: #e6edf3; --muted: #93a2b1; --line: #26313c;
+  --accent: #5fb3d1; --accent-soft: #15303b; --off: #5d6b78; --warn: #f0995c; --warn-soft: #3a2416; --good: #6cc48d; --good-soft: #17301f; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.45; }
+.wrap { max-width: 920px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+h1 { font-size: 26px; font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { color: var(--muted); margin: 6px 0 0; max-width: 66ch; }
+.sum { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: baseline; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.sum b { font-family: var(--f-num); font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sum span { color: var(--muted); }
+.sum .changes b { color: var(--warn); }
+.save { margin-left: auto; font-size: 13px; color: var(--muted); }
+.save.err { color: var(--warn); }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.chip:focus-visible, .sw:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#q { flex: 1 1 200px; min-width: 0; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 8px 12px; font: inherit; }
+.legend { font-size: 13px; color: var(--muted); margin: 0; max-width: 72ch; }
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px 14px; align-items: center; padding: 11px 14px; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row.is-off .name { color: var(--off); }
+.row.changed { background: color-mix(in srgb, var(--warn-soft) 55%, transparent); }
+.name { font-weight: 500; overflow-wrap: anywhere; }
+.tag { display: inline-block; font-size: 11.5px; letter-spacing: 0.02em; padding: 1px 8px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+.tag.suggest_off { background: var(--warn-soft); color: var(--warn); }
+.tag.notes { background: var(--good-soft); color: var(--good); }
+.tag.quiet, .tag.off { background: var(--bg); color: var(--muted); }
+.nums { display: flex; flex-wrap: wrap; gap: 4px 16px; font-family: var(--f-num); font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; justify-content: flex-end; }
+.nums .k { font-family: var(--f-body); }
+.simbar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: var(--line); vertical-align: 1px; margin-left: 4px; overflow: hidden; }
+.simbar i { display: block; height: 100%; background: var(--accent); }
+.sw { position: relative; width: 40px; height: 24px; border-radius: 12px; border: 0; background: var(--off); cursor: pointer; padding: 0; flex: none; }
+.sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); transition: transform .15s; }
+.sw[aria-checked="true"] { background: var(--accent); }
+.sw[aria-checked="true"]::after { transform: translateX(16px); }
+.sw:disabled { opacity: .5; cursor: default; }
+.empty { padding: 28px 16px; color: var(--muted); text-align: center; }
+.note { font-size: 13px; color: var(--muted); }
+@media (max-width: 620px) { .row { grid-template-columns: auto minmax(0, 1fr); } .nums { grid-column: 2; justify-content: flex-start; } }
+@media (prefers-reduced-motion: reduce) { .sw::after { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Каналы Radar</h1>
+    <p class="lede">Все Telegram-подписки, которые Radar читает. Выключи шумные — переключатель сохраняется сразу. Когда закончишь, напиши мне «готово», и я применю выбор на сервере.</p>
+  </header>
+
+  <section class="sum" aria-live="polite">
+    <div><b id="s-on">0</b> <span>включено</span></div>
+    <div><b id="s-off">0</b> <span>выключено</span></div>
+    <div class="changes"><b id="s-ch">0</b> <span>изменений с сегодняшнего состояния</span></div>
+    <div class="save" id="save">Подключаюсь…</div>
+  </section>
+
+  <div class="bar" role="toolbar" aria-label="Фильтр">
+    <button class="chip" data-f="all" aria-pressed="true">Все</button>
+    <button class="chip" data-f="suggest_off" aria-pressed="false">Предлагаю выключить</button>
+    <button class="chip" data-f="notes" aria-pressed="false">Ты пересылал в заметки</button>
+    <button class="chip" data-f="quiet" aria-pressed="false">Молчат неделю</button>
+    <button class="chip" data-f="off" aria-pressed="false">Выключены</button>
+    <input id="q" type="search" placeholder="Найти канал" aria-label="Найти канал">
+  </div>
+
+  <p class="legend"><b>постов</b> — сколько Radar забрал за 7 дней · <b>вкус</b> — средняя похожесть его историй на твой профиль (у отобранных обычно 0.5+) · <b>близко</b> — истории с похожестью от 0.45 · <b>в заметки</b> — сколько раз ты пересылал из него в @oldgnotes. «Предлагаю выключить»: ни одной пересылки и вкус ниже 0.43 или ни одной близкой истории.</p>
+
+  <div class="list" id="list"></div>
+  <p class="note">Данные на __DATE__. Выключенный канал Radar перестаёт читать со следующего сбора; уже собранное остаётся в базе.</p>
+</div>
+
+<script type="application/json" id="data">__DATA__</script>
+<script>
+const rows = JSON.parse(document.getElementById("data").textContent);
+const LABEL = { suggest_off: "предлагаю выключить", notes: "пересылал", quiet: "молчит", off: "выключен", ok: "" };
+const state = new Map(rows.map(r => [r.id, r.on]));   // what the switches show
+let filter = "all", query = "", db = null, saving = 0;
+
+const $ = id => document.getElementById(id);
+function setSave(text, err) { const el = $("save"); el.textContent = text; el.classList.toggle("err", !!err); }
+
+function render() {
+  const q = query.trim().toLowerCase();
+  const shown = rows.filter(r => (filter === "all" || r.why === filter) && (!q || r.t.toLowerCase().includes(q)));
+  const list = $("list");
+  list.replaceChildren();
+  if (!shown.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = "Ничего не нашлось"; list.append(e); }
+  for (const r of shown) {
+    const on = state.get(r.id);
+    const row = document.createElement("div");
+    row.className = "row" + (on ? "" : " is-off") + (on !== r.on ? " changed" : "");
+    const sw = document.createElement("button");
+    sw.className = "sw"; sw.setAttribute("role", "switch"); sw.setAttribute("aria-checked", String(on));
+    sw.setAttribute("aria-label", (on ? "Выключить " : "Включить ") + r.t); sw.disabled = !db;
+    sw.addEventListener("click", () => toggle(r));
+    const name = document.createElement("div");
+    const nm = document.createElement("span"); nm.className = "name"; nm.textContent = r.t; name.append(nm);
+    if (LABEL[r.why]) { const t = document.createElement("span"); t.className = "tag " + r.why; t.textContent = LABEL[r.why]; name.append(t); }
+    const nums = document.createElement("div"); nums.className = "nums";
+    const add = (k, v, extra) => { const s = document.createElement("span"); s.innerHTML = `<span class="k">${k}</span> `; s.append(v); if (extra) s.append(extra); nums.append(s); };
+    add("постов", String(r.n));
+    if (r.sim !== null) { const b = document.createElement("span"); b.className = "simbar"; const i = document.createElement("i"); i.style.width = Math.max(0, Math.min(1, (r.sim - 0.2) / 0.6)) * 100 + "%"; b.append(i); add("вкус", r.sim.toFixed(2), b); }
+    if (r.close) add("близко", String(r.close));
+    if (r.fwd) add("в заметки", String(r.fwd) + (r.last ? " · " + r.last.slice(8, 10) + "." + r.last.slice(5, 7) + "." + r.last.slice(2, 4) : ""));
+    if (r.ads) add("реклама", String(r.ads));
+    row.append(sw, name, nums);
+    list.append(row);
+  }
+  let on = 0, ch = 0;
+  for (const r of rows) { const v = state.get(r.id); on += v ? 1 : 0; ch += v !== r.on ? 1 : 0; }
+  $("s-on").textContent = on; $("s-off").textContent = rows.length - on; $("s-ch").textContent = ch;
+}
+
+async function toggle(r) {
+  if (!db) return;
+  const next = !state.get(r.id);
+  state.set(r.id, next); render();
+  saving++; setSave("Сохраняю…");
+  try {
+    await db.collection("choices").doc(String(r.id)).set({ enabled: next, title: r.t });
+    saving--; if (!saving) setSave("Сохранено");
+  } catch (e) {
+    saving--; state.set(r.id, !next); render();
+    setSave("Не сохранилось: " + (e && e.message || "ошибка") + ". Попробуй ещё раз.", true);
+  }
+}
+
+document.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => {
+  filter = b.dataset.f; document.querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", String(c === b))); render();
+}));
+$("q").addEventListener("input", e => { query = e.target.value; render(); });
+render();
+
+(async () => {
+  const cap = window.claude && window.claude.use ? await window.claude.use("db") : null;
+  if (!cap) { setSave("Сохранение недоступно: открой страницу в claude.ai под своим аккаунтом", true); return; }
+  db = cap;
+  db.collection("choices").onSnapshot(snap => {
+    for (const d of snap.docs) { const id = Number(d.id); if (state.has(id) && typeof d.data().enabled === "boolean") state.set(id, d.data().enabled); }
+    if (!saving) setSave(snap.size ? "Сохранено · отмечено " + snap.size : "Выбор сохраняется автоматически");
+    render();
+  }, e => setSave("Связь с хранилищем потеряна: обнови страницу", true));
+  render();
+})();
+</script>
