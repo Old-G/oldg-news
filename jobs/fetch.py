@@ -1,4 +1,4 @@
-"""fetch job: every enabled source → items with canonical URLs. Steps 1–2 of the pipeline."""
+"""fetch job, pipeline steps 1–4: sources → items → normalize → embed → stories."""
 
 import asyncio
 import logging
@@ -7,11 +7,12 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from openai import AsyncOpenAI
 from telethon import utils
 
 from adapters import RawItem, rss, telegram
 from config import get_settings
-from core import normalize
+from core import cluster, embed, normalize
 from db import queries
 
 log = logging.getLogger("fetch")
@@ -108,6 +109,24 @@ async def fetch_feeds(conn, stats: dict, http: httpx.AsyncClient) -> None:
         st["by_kind"][src.kind] = st["by_kind"].get(src.kind, 0) + new
 
 
+def normalize_pending(conn, batch: int = 500) -> dict:
+    """Clean text, pick the main link, language, ads. Marks an item done by setting lang; safe to rerun."""
+    stats = {"normalized": 0, "ads": 0}
+    while rows := queries.items_to_normalize(conn, batch):
+        updates = []
+        for r in rows:
+            text = normalize.clean_text(r.text)
+            url = normalize.primary_url(r.urls) if r.kind == "telegram" else r.url
+            own = r.link.split("/")[3] if r.link and r.link.count("/") >= 4 else None
+            ad = normalize.is_ad(r.text, r.urls, r.kind, own)
+            updates.append((text, url, normalize.content_hash(url, text), normalize.detect_lang(text or r.title), ad, r.id))
+            stats["ads"] += ad
+        queries.set_normalized(conn, updates)
+        conn.commit()
+        stats["normalized"] += len(rows)
+    return stats
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -130,6 +149,23 @@ async def main() -> None:
                 log.exception("%s failed", name)
                 errors.append(f"{name}: {e!r}")
     stats["items_new"] = stats["telegram"]["items_new"] + stats["feeds"]["items_new"]
+
+    async def run_stage(name: str) -> dict:
+        if name == "normalize":
+            return normalize_pending(conn)
+        if name == "embed":
+            return await embed.embed_pending(conn, AsyncOpenAI(api_key=s.openai_api_key), s)
+        return cluster.cluster_pending(conn, s)
+
+    for name in ("normalize", "embed", "cluster"):
+        try:
+            stats[name] = await run_stage(name)
+        except Exception as e:
+            # cluster still runs on whatever got embedded; the next run picks up the rest
+            conn.rollback()
+            log.exception("%s failed", name)
+            errors.append(f"{name}: {e!r}")
+    stats["usd"] = stats.get("embed", {}).get("usd", 0.0)
     queries.finish_run(conn, run_id, stats, error="; ".join(errors) or None)
     log.info("run %s done: %s", run_id, stats)
     conn.close()

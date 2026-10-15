@@ -1,8 +1,11 @@
 """All SQL of the pipeline. Callers own transactions: commit after a consistent unit of work."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
+import numpy as np
 import psycopg
+from pgvector.psycopg import register_vector
 from psycopg.types.json import Jsonb
 
 from adapters import RawItem
@@ -10,7 +13,9 @@ from core.normalize import content_hash
 
 
 def connect(url: str) -> psycopg.Connection:
-    return psycopg.connect(url)
+    conn = psycopg.connect(url)
+    register_vector(conn)
+    return conn
 
 
 @dataclass
@@ -123,3 +128,151 @@ def finish_run(conn: psycopg.Connection, run_id: int, stats: dict, error: str | 
         (Jsonb(stats), error, run_id),
     )
     conn.commit()
+
+
+# --- normalize ---------------------------------------------------------------
+
+@dataclass
+class RawRow:
+    id: int
+    kind: str
+    title: str | None
+    text: str | None
+    url: str | None
+    urls: list[str]
+    link: str | None  # t.me/<username>/<id> for Telegram items
+
+
+def items_to_normalize(conn: psycopg.Connection, limit: int) -> list[RawRow]:
+    rows = conn.execute(
+        """
+        select i.id, s.kind, i.title, i.text, i.url, i.urls, i.raw->>'link'
+          from items i join sources s on s.id = i.source_id
+         where i.lang is null
+         order by i.id limit %s
+        """,
+        (limit,),
+    ).fetchall()
+    return [RawRow(*r) for r in rows]
+
+
+def set_normalized(conn: psycopg.Connection, rows: list[tuple]) -> None:
+    """rows: (text, url, content_hash, lang, is_ad, id)"""
+    with conn.cursor() as cur:
+        cur.executemany(
+            "update items set text = %s, url = %s, content_hash = %s, lang = %s, is_ad = %s where id = %s", rows
+        )
+
+
+# --- embed -------------------------------------------------------------------
+
+@dataclass
+class EmbedRow:
+    id: int
+    title: str | None
+    text: str | None
+    url: str | None
+
+
+def items_to_embed(conn: psycopg.Connection, limit: int) -> list[EmbedRow]:
+    rows = conn.execute(
+        """
+        select id, title, text, url from items
+         where embedding is null and lang is not null and not is_ad
+           and (coalesce(text, '') <> '' or coalesce(title, '') <> '' or url is not null)
+         order by id limit %s
+        """,
+        (limit,),
+    ).fetchall()
+    return [EmbedRow(*r) for r in rows]
+
+
+def set_embeddings(conn: psycopg.Connection, rows: list[tuple[int, np.ndarray]]) -> None:
+    with conn.cursor() as cur:
+        cur.executemany("update items set embedding = %s where id = %s", [(v, i) for i, v in rows])
+
+
+# --- cluster -----------------------------------------------------------------
+
+@dataclass
+class ClusterRow:
+    id: int
+    url: str | None
+    title: str | None
+    published_at: datetime | None
+    embedding: np.ndarray
+    is_label_source: bool
+
+
+def items_to_cluster(conn: psycopg.Connection) -> list[ClusterRow]:
+    rows = conn.execute(
+        """
+        select i.id, i.url, i.title, i.published_at, i.embedding, s.is_label_source
+          from items i join sources s on s.id = i.source_id
+         where i.story_id is null and i.embedding is not null
+         order by i.published_at nulls last, i.id
+        """
+    ).fetchall()
+    return [ClusterRow(*r) for r in rows]
+
+
+def story_by_url(conn: psycopg.Connection, url: str, embedding: np.ndarray, days: int) -> tuple[int, float] | None:
+    row = conn.execute(
+        """
+        select s.id, 1 - (s.centroid <=> %s) as sim
+          from items i join stories s on s.id = i.story_id
+         where i.url = %s and s.last_seen_at > now() - make_interval(days => %s)
+         order by sim desc limit 1
+        """,
+        (embedding, url, days),
+    ).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def nearest_stories(conn: psycopg.Connection, embedding: np.ndarray, days: int) -> list[tuple[int, float]]:
+    """The spec's story search: three nearest centroids among stories seen within `days`."""
+    return [
+        (r[0], r[1])
+        for r in conn.execute(
+            """
+            select id, 1 - (centroid <=> %s) as sim
+              from stories
+             where last_seen_at > now() - make_interval(days => %s)
+             order by centroid <=> %s
+             limit 3
+            """,
+            (embedding, days, embedding),
+        ).fetchall()
+    ]
+
+
+def create_story(conn: psycopg.Connection, it: ClusterRow) -> int:
+    story_id = conn.execute(
+        """
+        insert into stories (canonical_url, title, first_seen_at, last_seen_at, centroid, heat)
+        values (%s, %s, coalesce(least(%s, now()), now()), now(), %s, 1)
+        returning id
+        """,
+        (it.url, it.title, it.published_at, it.embedding),
+    ).fetchone()[0]
+    conn.execute("update items set story_id = %s where id = %s", (story_id, it.id))
+    return story_id
+
+
+def attach_item(conn: psycopg.Connection, item_id: int, story_id: int) -> None:
+    """centroid = mean of member embeddings, heat = distinct sources, last_seen_at = now()."""
+    conn.execute("update items set story_id = %s where id = %s", (story_id, item_id))
+    conn.execute(
+        """
+        update stories s
+           set centroid = m.centroid, heat = m.heat, last_seen_at = now()
+          from (select avg(embedding) as centroid, count(distinct source_id) as heat
+                  from items where story_id = %s) m
+         where s.id = %s
+        """,
+        (story_id, story_id),
+    )
+
+
+def add_feedback(conn: psycopg.Connection, story_id: int, action: str, origin: str) -> None:
+    conn.execute("insert into feedback (story_id, action, origin) values (%s, %s, %s)", (story_id, action, origin))

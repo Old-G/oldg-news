@@ -3,7 +3,7 @@ import asyncio
 import httpx
 import pytest
 
-from core.normalize import canonical_url, canonical_urls, is_short
+from core.normalize import canonical_url, canonical_urls, clean_text, detect_lang, is_ad, is_short, primary_url
 
 
 @pytest.mark.parametrize(
@@ -74,3 +74,44 @@ def test_failed_expansion_keeps_the_link():
             return await canonical_urls(["https://bit.ly/x"], client)
 
     assert asyncio.run(run()) == ["https://bit.ly/x"]
+
+
+def test_primary_url_skips_telegram_and_site_roots():
+    assert primary_url(["https://t.me/addlist/abc", "https://example.com", "https://github.com/a/b"]) == "https://github.com/a/b"
+    assert primary_url(["https://t.me/chan/123", "https://t.me/chan"]) is None
+    assert primary_url([]) is None
+
+
+def test_clean_text_drops_junk_lines():
+    text = "Вышел Claude Code 3.0\nДетали: агенты в фоне\n🔥🔥🔥\n#ai #news\n👉 Подписывайтесь на канал\n@some_channel"
+    assert clean_text(text) == "Вышел Claude Code 3.0\nДетали: агенты в фоне"
+    assert clean_text("") == ""
+    assert clean_text("🔥") is None
+
+
+@pytest.mark.parametrize(
+    "text, urls, own, expected",
+    [
+        ("Новая модель Qwen", ["https://huggingface.co/qwen"], "chan", False),
+        ("Скидка по промокоду AI20", ["https://shop.example/x"], "chan", True),
+        ("Реклама. erid: 2Vtzqx", [], "chan", True),
+        ("Лучший канал про нейросети, подпишись", ["https://t.me/other_channel"], "chan", True),
+        ("Вступай: https://t.me/+AbCd", ["https://t.me/+AbCd"], "chan", True),
+        ("Новость дня, подробности ниже", ["https://t.me/chan"], "chan", False),       # own footer
+        ("Смотрите пост", ["https://t.me/other_channel/123"], "chan", False),          # a post, not a channel
+        ("Текст без ссылок", [], "chan", False),
+    ],
+)
+def test_ad_heuristics(text, urls, own, expected):
+    assert is_ad(text, urls, "telegram", own) is expected
+
+
+def test_ads_only_judged_for_telegram():
+    assert is_ad("промокод", [], "rss") is False
+
+
+def test_detect_lang():
+    assert detect_lang("Вышла новая модель для агентов с длинным контекстом") == "ru"
+    assert detect_lang("Anthropic released a new version of the MCP specification") == "en"
+    assert detect_lang("🔥🔥🔥") == "und"
+    assert detect_lang(None) == "und"

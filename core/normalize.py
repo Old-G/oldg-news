@@ -74,3 +74,71 @@ async def expand(url: str, client: httpx.AsyncClient, timeout: float = 5.0) -> s
 async def canonical_urls(urls: list[str], client: httpx.AsyncClient, timeout: float = 5.0) -> list[str]:
     expanded = await asyncio.gather(*(expand(u, client, timeout) for u in urls))
     return list(dict.fromkeys(canonical_url(u) for u in expanded))
+
+
+TELEGRAM_HOSTS = {"t.me", "telegram.me", "telegram.dog"}
+
+
+def is_specific_url(url: str | None) -> bool:
+    """A link that names one thing: not a Telegram channel/footer link, not a bare site root.
+
+    Only such links may glue items into one story by exact match; channel footers
+    (t.me/addlist/…, t.me/channel) would otherwise merge unrelated posts.
+    """
+    if not url:
+        return False
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    return host not in TELEGRAM_HOSTS and parts.path.strip("/") != ""
+
+
+def primary_url(urls: list[str]) -> str | None:
+    """The item's main link: the first specific one; Telegram-only posts have none."""
+    return next((u for u in urls if is_specific_url(u)), None)
+
+
+# Lines that carry no content: emoji/punctuation only, hashtags/mentions only, «подписывайся» footers
+_JUNK_LINE = re.compile(r"^[\W_]*$", re.U)
+_TAGS_LINE = re.compile(r"^(?:\s*[#@][\w.]+[\s|·•,]*)+$", re.U)
+_SUBSCRIBE = re.compile(r"подпис(?:ывайтесь|ывайся|аться|ка)|subscribe|наш (?:канал|чат)|👉\s*@", re.I)
+
+
+def clean_text(text: str | None) -> str | None:
+    if not text:
+        return text
+    lines = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or _JUNK_LINE.match(s) or _TAGS_LINE.match(s):
+            continue
+        if len(s) <= 120 and _SUBSCRIBE.search(s):
+            continue
+        lines.append(s)
+    return "\n".join(lines) or None
+
+
+_AD_MARKERS = re.compile(r"#реклама|#ad\b|#промо|\berid\b|промокод|по промокоду|на правах рекламы|партн[её]рский материал", re.I)
+_CHANNEL_LINK = re.compile(r"^https://t\.me/(?:\+|joinchat/|addlist/)?[\w+-]+$")
+
+
+def is_ad(text: str | None, urls: list[str], kind: str, own_username: str | None = None) -> bool:
+    """Telegram ad heuristics from the spec: #реклама, erid, промокод, link only to a channel.
+
+    A channel linking to itself (the usual footer) is not an ad; promoting another channel is.
+    """
+    if kind != "telegram":
+        return False
+    if text and _AD_MARKERS.search(text):
+        return True
+    own = f"https://t.me/{own_username}".lower() if own_username else None
+    foreign = [u for u in urls if u.lower() != own]
+    return bool(foreign) and all(_CHANNEL_LINK.match(u) for u in foreign)
+
+
+def detect_lang(text: str | None, min_score: float = 0.3) -> str:
+    if not text or not text.strip():
+        return "und"
+    from fast_langdetect import detect  # loads the bundled model on first use
+
+    best = detect(" ".join(text.split())[:1000], model="lite", k=1)
+    return best[0]["lang"] if best and best[0]["score"] >= min_score else "und"

@@ -36,8 +36,16 @@ class Settings(BaseSettings):
     http_timeout_s: float = 30.0
     short_link_timeout_s: float = 5.0
 
+    # Embeddings
+    embed_batch: int = 100
+    embed_text_chars: int = 1500
+    embed_dimensions: int = 1536  # = vector(1536); HNSW in pgvector indexes at most 2000 dims
+    embed_usd_per_mtok: float = 0.13  # price of EMBED_MODEL per 1M tokens (text-embedding-3-large), for runs.stats
+
     # Thresholds
     cluster_sim: float = 0.86
+    # an exact shared URL still needs this similarity to glue: a popular repo link alone must not merge unrelated posts
+    url_match_min_sim: float = 0.5
     story_match_days: int = 7
     prefilter_n: int = 60
     prefilter_min_sim: float = 0.30
