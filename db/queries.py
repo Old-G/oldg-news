@@ -684,8 +684,8 @@ def taste_vectors(conn: psycopg.Connection, positive: bool) -> list[np.ndarray]:
     return [r[0].to_numpy() for r in rows]
 
 
-def taste_signals(conn: psycopg.Connection, positive: bool, days: int, limit: int) -> list[tuple]:
-    """(signal_at, title, text, url, forwarded, action, origin) of marked stories within `days`, newest first.
+def taste_signals(conn: psycopg.Connection, positive: bool, since, limit: int) -> list[tuple]:
+    """(signal_at, title, text, url, forwarded, action, origin) of marked stories after `since`, newest first.
     Text: the enrich summary, else the longest item text."""
     return conn.execute(
         f"""
@@ -697,11 +697,11 @@ def taste_signals(conn: psycopg.Connection, positive: bool, days: int, limit: in
                  exists (select 1 from items i where i.story_id = s.id and i.raw ? 'fwd_from_channel_id'),
                  f.action, f.origin
             from feedback f join stories s on s.id = f.story_id
-           where {POSITIVE if positive else NEGATIVE} and {_SIGNAL_AT} > now() - make_interval(days => %s)
+           where {POSITIVE if positive else NEGATIVE} and {_SIGNAL_AT} > %s
            order by s.id, f.origin = 'bot' desc, f.created_at desc
         ) t order by at desc limit %s
         """,
-        (days, limit),
+        (since, limit),
     ).fetchall()
 
 
@@ -716,9 +716,11 @@ def signal_counts(conn: psycopg.Connection) -> dict[str, int]:
     return dict(rows)
 
 
-def active_profile_row(conn: psycopg.Connection) -> tuple[int, int, str] | None:
-    """(id, version, profile_text) of the active profile."""
-    return conn.execute("select id, version, profile_text from taste_profiles where is_active").fetchone()
+def active_profile_row(conn: psycopg.Connection) -> tuple[int, int, str, dict, datetime] | None:
+    """(id, version, profile_text, built_from, created_at) of the active profile."""
+    return conn.execute(
+        "select id, version, profile_text, built_from, created_at from taste_profiles where is_active"
+    ).fetchone()
 
 
 def missed_reasons(conn: psycopg.Connection, days: int) -> dict[str, int]:

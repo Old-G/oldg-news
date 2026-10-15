@@ -63,7 +63,7 @@ def test_profile_diff_and_message():
     d = profile_diff("1. Core\n- agents\n- rag\n", "1. Core\n- agents & memory\n- rag\n")
     assert d == ["− - agents", "+ - agents & memory"]
     built = {"signals": {"notes": 89, "star": 2}, "positive": 91, "negative": 0, "k_pos": 8, "k_neg": 0,
-             "profile_from": 91, "window_days": 90}
+             "new_positive": 7, "new_negative": 0}
     msg = diff_message(1, 2, built, d, {"prefilter": 2, "not_in_db": 1}, activated=True)
     assert msg.startswith("🧭 <b>Профиль вкуса v2</b> (был v1)\nПозитив: 91 (заметки 89, ⭐ 2, 👍 0, missed 0) · 👎 0")
     assert "Missed за неделю: prefilter 2 · not_in_db 1" in msg
@@ -71,3 +71,18 @@ def test_profile_diff_and_message():
     assert msg.endswith("--activate 1</code>")
     long = diff_message(1, 2, built, ["+ " + "x" * 100] * 100, {}, activated=False)
     assert len(long) <= 4096 and "--activate 2" in long
+
+
+def test_update_without_new_signals_keeps_the_text_and_makes_no_call():
+    import asyncio
+    from core.taste import update_profile
+    from core.llm import Usage, load_prompt
+    import re as _re
+
+    class NoCall:
+        responses = None  # any call would fail
+
+    assert asyncio.run(update_profile(NoCall(), None, "PROFILE", 1, "2026-10-11", [], [], Usage())) == "PROFILE"
+    p = load_prompt("taste_update")
+    assert set(_re.findall(r"\{(\w+)\}", p.system + p.user)) == {
+        "version", "profile_text", "since", "n_pos", "positive_items", "n_neg", "negative_items"}

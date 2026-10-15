@@ -4,8 +4,9 @@
     python -m jobs.weekly_taste --preview   # build and send, keep the current version active
 
 Positive: ⭐ and 👍 in the bot, /missed, notes channel posts; negative: 👎 in the bot.
-Centroids from all of them (positive k = 5 / 8, negative k = 3 once there are 3 downvotes);
-the profile text from the last TASTE_WINDOW_DAYS days. Old versions stay; rollback is
+Centroids from all of them (positive k = 5 / 8, negative k = 3 once there are 3 downvotes).
+The text is not rewritten: prompt `taste_update` changes the active profile only where the signals
+since it was built show it (no signals → same text, no call). Old versions stay; rollback is
 `python -m jobs.bootstrap_taste --activate N`.
 """
 
@@ -13,7 +14,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import date
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -47,21 +48,27 @@ async def run(preview: bool = False) -> dict:
         k_neg = taste.neg_k(len(neg_v), s.taste_neg_k)
         neg = list(zip(*taste.kmeans(np.array(neg_v, dtype=np.float32), k_neg))) if k_neg else []
 
-        positive = _items(queries.taste_signals(conn, True, s.taste_window_days, s.taste_recent_n))
-        negative = _items(queries.taste_signals(conn, False, s.taste_window_days, s.taste_recent_n))
-        text = await taste.write_profile(llm.make_client(s), s, positive, negative, usage)
+        if not old:
+            raise RuntimeError("no active taste profile to update: run jobs.bootstrap_taste first")
+        _, old_version, old_text, old_from, old_created = old
+        since = (old_from or {}).get("until") or old_created.isoformat()  # signals the old version did not see
+        now = datetime.now(timezone.utc)
+        positive = _items(queries.taste_signals(conn, True, since, s.taste_recent_n))
+        negative = _items(queries.taste_signals(conn, False, since, s.taste_recent_n))
+        text = await taste.update_profile(llm.make_client(s), s, old_text, old_version, since[:10],
+                                          positive, negative, usage)
         built_from = {"positive": len(pos_v), "negative": len(neg_v), "signals": queries.signal_counts(conn),
-                      "k_pos": len(pos_c), "k_neg": len(neg), "profile_from": len(positive) + len(negative),
-                      "window_days": s.taste_window_days, "until": date.today().isoformat(),
-                      "model": s.taste_model or s.strong_model}
+                      "k_pos": len(pos_c), "k_neg": len(neg), "updated_from": old_version, "since": since,
+                      "new_positive": len(positive), "new_negative": len(negative),
+                      "until": now.isoformat(), "model": s.taste_model or s.strong_model}
         profile_id, version = queries.create_taste_profile(conn, text, built_from, list(zip(pos_c, pos_n)), neg)
         if not preview:
             queries.activate_taste_profile(conn, version)
         conn.commit()
 
-        diff = taste.profile_diff(old[2] if old else "", text)
+        diff = taste.profile_diff(old_text, text)
         missed = queries.missed_reasons(conn, 7)
-        await bot.send_message(s.owner_chat_id, taste.diff_message(old[1] if old else None, version, built_from, diff,
+        await bot.send_message(s.owner_chat_id, taste.diff_message(old_version, version, built_from, diff,
                                                                     missed, activated=not preview))
         stats.update(version=version, active=not preview, built_from=built_from, changed_lines=len(diff),
                      missed=missed, usd=round(usage.usd, 4), llm=usage.as_stats())

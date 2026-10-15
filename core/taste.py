@@ -90,6 +90,19 @@ async def write_profile(
     return await llm.complete(client, s, model, prompt.system, merge_input, usage)
 
 
+async def update_profile(client: AsyncOpenAI, s: Settings, current: str, version: int, since: str,
+                         positive: list[str], negative: list[str], usage: llm.Usage) -> str:
+    """The taste_update prompt: the current profile changed only where the new signals show it.
+    No new signals → the current text as it is, no call."""
+    if not positive and not negative:
+        return current
+    prompt = llm.load_prompt("taste_update")
+    user = llm.render(prompt.user, version=version, profile_text=current, since=since,
+                      n_pos=len(positive), positive_items="\n".join(positive) or "(none)",
+                      n_neg=len(negative), negative_items="\n".join(negative) or "(none)")
+    return await llm.complete(client, s, s.taste_model or s.strong_model, prompt.system, user, usage)
+
+
 def neg_k(n: int, k: int) -> int:
     """Negative centroids: k of them once there are enough downvotes, none before (one stray 👎 is not a taste)."""
     return k if n >= k else 0
@@ -113,8 +126,8 @@ def diff_message(old_version: int | None, new_version: int, built_from: dict, di
     head = [f"🧭 <b>Профиль вкуса v{new_version}</b>" + (f" (был v{old_version})" if old_version else ""),
             f"Позитив: {built_from['positive']} (заметки {counts.get('notes', 0)}, ⭐ {counts.get('star', 0)}, "
             f"👍 {counts.get('up', 0)}, missed {counts.get('missed', 0)}) · 👎 {built_from['negative']}",
-            f"Центроиды: {built_from['k_pos']} pos, {built_from['k_neg']} neg · текст по {built_from['profile_from']} "
-            f"сигналам за {built_from['window_days']} дн."]
+            f"Центроиды: {built_from['k_pos']} pos, {built_from['k_neg']} neg · новых сигналов с прошлой версии: "
+            f"+{built_from['new_positive']} / −{built_from['new_negative']}"]
     if missed:
         head.append("Missed за неделю: " + " · ".join(f"{k} {v}" for k, v in sorted(missed.items(), key=lambda x: -x[1])))
     tail = ("Активен с этого момента. Откат: <code>python -m jobs.bootstrap_taste --activate "

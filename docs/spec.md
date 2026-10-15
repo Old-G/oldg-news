@@ -58,7 +58,7 @@ radar/
     drafts.py          # RU/EN черновики по ⭐
   bot/                 # aiogram: дайджест, callback'и, /add, /missed
   db/                  # schema.sql, migrations/, queries.py
-  prompts/             # taste_profile.md, enrich.md, score.md, article_ru.md, overview_ru.md, weekly_ru.md, draft_ru.md, draft_en.md
+  prompts/             # taste_profile.md, taste_update.md, enrich.md, score.md, article_ru.md, overview_ru.md, weekly_ru.md, draft_ru.md, draft_en.md
   jobs/                # fetch.py, daily.py, weekly.py, weekly_taste.py, bootstrap_taste.py
   docker-compose.yml
 ```
@@ -364,9 +364,9 @@ Job'ы по расписанию: `fetch` каждые 2 часа (шаги 1–
 
 ## Промпты
 
-Восемь промптов, инструкции все на английском (так стабильнее у любой модели), даже когда ответ на русском; лежат в `prompts/*.md` с `{placeholders}`. Общие правила: ответ только JSON там, где указано; парсер срезает \`\`\`-ограждения; при невалидном JSON — один повтор с добавкой «Return valid JSON only»; токены и стоимость каждого вызова пишутся в `runs.stats`. Мнение в черновиках всегда помечено как варианты — твоя позиция остаётся твоей. Мини-статьи и обзоры — только факты из источников: чего в источниках нет, то названо «не указано», а не додумано.
+Девять промптов, инструкции все на английском (так стабильнее у любой модели), даже когда ответ на русском; лежат в `prompts/*.md` с `{placeholders}`. Общие правила: ответ только JSON там, где указано; парсер срезает \`\`\`-ограждения; при невалидном JSON — один повтор с добавкой «Return valid JSON only»; токены и стоимость каждого вызова пишутся в `runs.stats`. Мнение в черновиках всегда помечено как варианты — твоя позиция остаётся твоей. Мини-статьи и обзоры — только факты из источников: чего в источниках нет, то названо «не указано», а не додумано.
 
-**1. `taste_profile.md` — профиль вкуса** (bootstrap из канала-заметок и еженедельное обновление; дешёвой моделью достаточно, сильная даёт профиль точнее)
+**1. `taste_profile.md` — профиль вкуса** (bootstrap из канала-заметок; дешёвой моделью достаточно, сильная даёт профиль точнее)
 
 ```text
 SYSTEM
@@ -385,6 +385,34 @@ Rules: derive only from the input; no generic AI topics he did not demonstrate; 
 
 USER
 POSITIVE ({n_pos} items, newest first):
+{positive_items}
+
+NEGATIVE ({n_neg} items):
+{negative_items}
+```
+
+**1a. `taste_update.md` — еженедельное обновление профиля вкуса** (сильная модель, `weekly_taste`)
+
+```text
+SYSTEM
+You maintain a reading-preference profile for one person: a practicing AI engineer who builds agentic systems, MCP servers and support automation in production. The profile is inserted into a ranking prompt so another model can score AI-news stories for him. Each week you get the current profile and the signals he gave since it was written; you return the updated profile.
+
+Signals: POSITIVE — items he saved to his notes channel, starred or upvoted in his digest, or reported as missed by the digest (he found them elsewhere and wanted them); NEGATIVE — items he downvoted in his digest. Each item: date, title, source kind, 1–3 lines of text or summary, URL domain.
+
+Update rules:
+- Start from the current profile and keep its five numbered sections, its wording and everything the signals do not contradict. The current profile was built from years of his notes and corrected by hand; a topic missing from one week of signals is not evidence that he lost interest.
+- Change only with evidence: a new interest or a sharper description of an existing one needs at least two positive signals; a new Ignore bullet needs at least two negative signals, or one negative that directly contradicts a current interest.
+- Remove a bullet only when negative signals contradict it. Never remove an Ignore bullet because of positives about a different topic.
+- Prefer refining an existing bullet over adding a new one; at most 10 core interests and 8 Ignore bullets.
+- A single item never becomes a core interest or an example by itself.
+- Keep it under 450 words, English, plain text, no markdown. Return the profile only — no preface, no list of changes.
+
+USER
+CURRENT PROFILE (v{version}):
+{profile_text}
+
+NEW SIGNALS since {since}, newest first.
+POSITIVE ({n_pos} items):
 {positive_items}
 
 NEGATIVE ({n_neg} items):
@@ -645,7 +673,7 @@ Bootstrap (`jobs/bootstrap_taste.py`, один раз):
 
 - Позитив = `star` из бота + `up` + посты канала-заметок + `missed` (особый позитив — ниже); негатив = `down`.
 - Пересчёт центроидов: `pos` по всем позитивным, `neg` по негативным (`k = TASTE_NEG_K` = 3, и только когда 👎 набралось не меньше трёх — один случайный 👎 не вкус), и в prefilter идёт `sim_pos − 0.5 * sim_neg`.
-- Текст профиля перегенерируется на окне `TASTE_WINDOW_DAYS` (90 дней; пост канала-заметок датируется самим постом, нажатие в боте — нажатием, не больше `TASTE_RECENT_N` = 300 сигналов), новая версия сразу активна, старые сохраняются (откат — `jobs.bootstrap_taste --activate N`). Диф двух версий присылается в бот одним сообщением — чтобы видеть, куда уехал вкус; там же — причины missed за неделю. `--preview` собирает версию, не активируя её.
+- Текст профиля не переписывается заново, а обновляется: промпт `taste_update` получает активный профиль и сигналы, пришедшие после него (пост канала-заметок датируется самим постом, нажатие в боте — нажатием, не больше `TASTE_RECENT_N` = 300), и меняет только то, что они подтверждают. Без новых сигналов текст остаётся как есть, без вызова LLM. Так ручная правка bootstrap и давние интересы не теряются из-за одной тихой недели (решение 15.10.2026: перегенерация по окну 90 дней на превью выбросила spec-driven разработку, AI для рынков и почти весь раздел Ignore). Новая версия сразу активна, старые сохраняются (откат — `jobs.bootstrap_taste --activate N`). Диф двух версий присылается в бот одним сообщением — чтобы видеть, куда уехал вкус; там же — причины missed за неделю. `--preview` собирает версию, не активируя её.
 - `missed` — особый сигнал: история была в базе, но не прошла отбор. Для каждой такой истории пишем в `runs.stats` (строка `job = 'missed'`), где именно её отсекло: `prefilter`, `score`, `digest_limit` (оценка проходила, но не влез лимит дайджеста или категории), а также `not_in_db` (ни в одном источнике — повод добавить источник; для учёта заводится история-заглушка со статусом `dismissed`), `in_digest`, `down`, `not_yet` (отбора ещё не было), `no_digest` (дайджест в те дни не собирался). Бот отвечает причиной сразу. Если из 10 missed 7 отсёк prefilter — порог `PREFILTER_MIN_SIM` слишком высокий, это видно без гадания.
 
 Почему два слоя, а не один LLM-скоринг на всё: prefilter за копейки режет 500 абстрактов arXiv до 60 кандидатов, а LLM видит только тех, кто прошёл. При этом всё с `heat ≥ 3` минует prefilter — чтобы мейнстрим-новость не потерялась только потому, что не похожа на старые заметки.
@@ -691,7 +719,6 @@ Bootstrap (`jobs/bootstrap_taste.py`, один раз):
 | HEAT\_BYPASS | 3 | 2–5 | дайджест забит мейнстримом → выше |
 | CANDIDATE\_WINDOW\_H | 36 | 24–72 | вчерашнее всплывает дважды → меньше |
 | TASTE\_NEG\_K | 3 | 2–5 | 👎-центроиды режут лишнее → меньше |
-| TASTE\_WINDOW\_DAYS | 90 | 30–180 | профиль дёргается от недели к неделе → больше |
 | WEEKLY\_TASTE\_AT | вс 09:00 | `off` — не планируется | — |
 | DIGEST\_N | 6 | 5–8 | не дочитываешь → меньше |
 | DIGEST\_WAVES | 07:30 / 13:00 / 19:00 | 1–4 волны | волна теряется в ленте → сдвинуть время; мало историй → меньше волн; `[]` — волны на паузе |

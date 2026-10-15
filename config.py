@@ -65,7 +65,6 @@ class Settings(BaseSettings):
     taste_k_large: int = 8  # with 300+ examples
     taste_k_large_from: int = 300
     taste_neg_k: int = 3  # negative centroids, once there are this many 👎
-    taste_window_days: int = 90  # the weekly profile text is written from the signals of this window
     weekly_taste_at: str = "sun 09:00"  # "off" = not scheduled
 
     # Thresholds
