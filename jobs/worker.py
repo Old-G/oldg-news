@@ -58,7 +58,7 @@ async def main() -> None:
 
     if s.digest_waves:
         scheduler.add_job(run_prepare, at(s.digest_prepare_at), id="prepare", **common)
-        if s.weekly_post_at:
+        if s.weekly_post_at != "off":  # an empty value in .env is ignored, so off is a word
             day, hhmm = s.weekly_post_at.split()
             scheduler.add_job(run_weekly, at(hhmm, day_of_week=day), id="weekly", **common)
     for wave, hhmm in enumerate(s.digest_waves, 1):

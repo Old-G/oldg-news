@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     digest_tz: str = "Europe/Minsk"
     wave1_n: int = 3
     digest_prepare_at: str = "07:00"  # prefilter → enrich → score → select → mini-articles → overview, before wave 1
-    weekly_post_at: str = "sun 20:00"  # «Неделя: куда движемся», after the evening wave; empty = off
+    weekly_post_at: str = "sun 20:00"  # «Неделя: куда движемся», after the evening wave; "off" = not scheduled
     # stories the LLM could not score (a failed batch) rank by taste similarity plus this much per extra source
     interim_heat_bonus: float = 0.05
     enrich_batch: int = 10
