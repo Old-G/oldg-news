@@ -141,12 +141,13 @@ class RawRow:
     url: str | None
     urls: list[str]
     link: str | None  # t.me/<username>/<id> for Telegram items
+    is_label_source: bool
 
 
 def items_to_normalize(conn: psycopg.Connection, limit: int) -> list[RawRow]:
     rows = conn.execute(
         """
-        select i.id, s.kind, i.title, i.text, i.url, i.urls, i.raw->>'link'
+        select i.id, s.kind, i.title, i.text, i.url, i.urls, i.raw->>'link', s.is_label_source
           from items i join sources s on s.id = i.source_id
          where i.lang is null
          order by i.id limit %s
@@ -285,3 +286,68 @@ def attach_item(conn: psycopg.Connection, item_id: int, story_id: int) -> None:
 
 def add_feedback(conn: psycopg.Connection, story_id: int, action: str, origin: str) -> None:
     conn.execute("insert into feedback (story_id, action, origin) values (%s, %s, %s)", (story_id, action, origin))
+
+
+# --- taste -------------------------------------------------------------------
+
+def bootstrap_note_stories(conn: psycopg.Connection, source_id: int) -> int:
+    """One starred story per embedded notes item that has none, dated by the post itself.
+
+    Old notes must not look fresh: no now() here, and status 'starred' keeps them out of digests.
+    """
+    rows = conn.execute(
+        "select id, url, title, published_at, embedding from items"
+        " where source_id = %s and story_id is null and embedding is not null order by published_at",
+        (source_id,),
+    ).fetchall()
+    for item_id, url, title, published_at, embedding in rows:
+        story_id = conn.execute(
+            """
+            insert into stories (canonical_url, title, first_seen_at, last_seen_at, centroid, heat, status)
+            values (%s, %s, coalesce(%s, now()), coalesce(%s, now()), %s, 1, 'starred')
+            returning id
+            """,
+            (url, title, published_at, published_at, embedding),
+        ).fetchone()[0]
+        conn.execute("update items set story_id = %s where id = %s", (story_id, item_id))
+        add_feedback(conn, story_id, "star", "notes")
+    return len(rows)
+
+
+def note_items(conn: psycopg.Connection, source_id: int, limit: int | None = None) -> list[tuple]:
+    """(published_at, title, text, url, forwarded, embedding), newest first."""
+    return conn.execute(
+        """
+        select published_at, title, text, url, (raw->>'fwd_from_channel_id') is not null, embedding
+          from items where source_id = %s and embedding is not null
+         order by published_at desc nulls last limit %s
+        """,
+        (source_id, limit),
+    ).fetchall()
+
+
+def create_taste_profile(
+    conn: psycopg.Connection, text: str, built_from: dict, centroids: list[tuple[np.ndarray, int]]
+) -> tuple[int, int]:
+    """A new inactive version with its positive centroids; returns (id, version)."""
+    profile_id, version = conn.execute(
+        """
+        insert into taste_profiles (version, profile_text, built_from)
+        values ((select coalesce(max(version), 0) + 1 from taste_profiles), %s, %s)
+        returning id, version
+        """,
+        (text, Jsonb(built_from)),
+    ).fetchone()
+    with conn.cursor() as cur:
+        cur.executemany(
+            "insert into taste_centroids (profile_id, polarity, centroid, n_items) values (%s, 'pos', %s, %s)",
+            [(profile_id, c, int(n)) for c, n in centroids],
+        )
+    return profile_id, version
+
+
+def activate_taste_profile(conn: psycopg.Connection, version: int, text: str | None = None) -> None:
+    """Exactly one active version; optional text replaces the generated one (the manual edit)."""
+    if text is not None:
+        conn.execute("update taste_profiles set profile_text = %s where version = %s", (text, version))
+    conn.execute("update taste_profiles set is_active = (version = %s)", (version,))

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -105,6 +106,15 @@ def _message_text(message: Any) -> str:
     return "\n".join([text, *hidden]) if text and hidden else text
 
 
+def _preview(message: Any) -> dict | None:
+    """Telegram's link preview: the only description a bare-link post carries."""
+    wp = getattr(message.media, "webpage", None)
+    title, description = getattr(wp, "title", None), getattr(wp, "description", None)
+    if not (title or description):
+        return None
+    return {"title": title, "description": description, "site": getattr(wp, "site_name", None)}
+
+
 def _fwd_channel_id(message: Any) -> int | None:
     fwd = message.fwd_from
     return getattr(fwd.from_id, "channel_id", None) if fwd and fwd.from_id else None
@@ -129,6 +139,12 @@ def messages_to_items(
             skipped += 1
             continue
         urls = list(dict.fromkeys(u for m in parts for u in extract_urls(m)))
+        preview = next((p for p in map(_preview, parts) if p), None)
+        title = text.splitlines()[0][:200]
+        if preview and len(re.sub(r"https?://\S+", "", text).strip()) < 100:
+            # a bare link: the preview is what the post is about
+            title = (preview["title"] or title)[:200]
+            text = "\n".join(t for t in (text, preview["title"], preview["description"]) if t)
         head = parts[0]
         fwd = next((m for m in parts if m.fwd_from), None)
         items.append(
@@ -136,7 +152,7 @@ def messages_to_items(
                 source_key=str(channel_id),
                 external_id=str(head.id),
                 url=urls[0] if urls else None,
-                title=text.splitlines()[0][:200],
+                title=title,
                 text=text,
                 published_at=head.date,
                 raw={
@@ -150,6 +166,7 @@ def messages_to_items(
                     "views": max((m.views or 0 for m in parts), default=0),
                     "forwards": max((m.forwards or 0 for m in parts), default=0),
                     "has_media": any(m.media for m in parts),
+                    "preview": preview,
                 },
             )
         )

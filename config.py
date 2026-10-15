@@ -42,6 +42,21 @@ class Settings(BaseSettings):
     embed_dimensions: int = 1536  # = vector(1536); HNSW in pgvector indexes at most 2000 dims
     embed_usd_per_mtok: float = 0.13  # price of EMBED_MODEL per 1M tokens (text-embedding-3-large), for runs.stats
 
+    # LLM prices, USD per 1M tokens (input, output); developers.openai.com/api/docs/pricing, 2026-10-15
+    llm_prices: dict[str, tuple[float, float]] = {
+        "gpt-6-luna": (0.10, 0.50),
+        "gpt-6.1-sol": (2.00, 10.00),
+    }
+
+    # Taste profile
+    taste_model: str = ""  # empty → STRONG_MODEL: the profile is built rarely and steers every score
+    taste_recent_n: int = 300  # newest notes the profile text is written from
+    taste_chunk_n: int = 100  # chunk size if the input is too long for one call
+    taste_max_input_chars: int = 200_000
+    taste_k: int = 5
+    taste_k_large: int = 8  # with 300+ examples
+    taste_k_large_from: int = 300
+
     # Thresholds
     # 0.86 in the spec's table; text-embedding-3-large at 1536 dims puts cross-source duplicates at 0.80–0.86
     # (checked on 2.3k items, 2026-10-15)

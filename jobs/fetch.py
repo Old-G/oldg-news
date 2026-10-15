@@ -118,7 +118,8 @@ def normalize_pending(conn, batch: int = 500) -> dict:
             text = normalize.clean_text(r.text)
             url = normalize.primary_url(r.urls) if r.kind == "telegram" else r.url
             own = r.link.split("/")[3] if r.link and r.link.count("/") >= 4 else None
-            ad = normalize.is_ad(r.text, r.urls, r.kind, own)
+            # a post saved to the notes channel is a taste label, whatever it looks like
+            ad = not r.is_label_source and normalize.is_ad(r.text, r.urls, r.kind, own)
             updates.append((text, url, normalize.content_hash(url, text), normalize.detect_lang(text or r.title), ad, r.id))
             stats["ads"] += ad
         queries.set_normalized(conn, updates)

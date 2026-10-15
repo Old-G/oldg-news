@@ -56,3 +56,20 @@ def test_forwarded_channel_is_recorded():
     (item,), _ = messages_to_items([msg(1, "переслано", fwd_from=fwd)], -1001, None)
     assert item.raw["fwd_from_channel_id"] == 555
     assert item.raw["fwd_from_post_id"] == 99
+
+
+def test_bare_link_post_takes_title_and_text_from_preview():
+    wp = SimpleNamespace(url="https://medium.com/p/abc", title="Agent memory that works", description="How we built it", site_name="Medium")
+    m = msg(1, "https://medium.com/p/abc", [MessageEntityUrl(offset=0, length=24)], media=SimpleNamespace(webpage=wp))
+    (item,), _ = messages_to_items([m], -1001, None)
+    assert item.title == "Agent memory that works"
+    assert item.text == "https://medium.com/p/abc\nAgent memory that works\nHow we built it"
+    assert item.raw["preview"]["site"] == "Medium"
+
+
+def test_post_with_real_text_keeps_its_own_title():
+    wp = SimpleNamespace(url="https://a.dev", title="Preview title", description="d", site_name=None)
+    text = "Вышел новый релиз MCP SDK, главное — поддержка stateless-сессий и быстрее handshake на холодном старте"
+    (item,), _ = messages_to_items([msg(1, text, media=SimpleNamespace(webpage=wp))], -1001, None)
+    assert item.title == text[:200]
+    assert item.text == text
