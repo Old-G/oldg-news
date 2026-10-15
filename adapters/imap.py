@@ -3,6 +3,10 @@ personal «For you» picks for Gleb, which no feed exposes.
 
 The mailbox only ever gets what a Gmail filter forwards to it; the main account is never touched.
 Messages are read with BODY.PEEK (left unread); the cursor is the last IMAP UID seen.
+
+Anyone can write to the mailbox, so a message counts only when Gmail itself vouches for the sender:
+its own Authentication-Results (the topmost, from mx.google.com) show dkim=pass for the From domain,
+and From is Medium or one of the trusted forwarders. Links are taken from medium.com only.
 """
 
 import email
@@ -10,7 +14,7 @@ import imaplib
 import re
 from datetime import datetime, timedelta, timezone
 from email.message import Message
-from email.utils import parsedate_to_datetime
+from email.utils import parseaddr, parsedate_to_datetime
 from urllib.parse import urlsplit
 
 import lxml.html
@@ -19,11 +23,24 @@ from adapters import RawItem
 
 # medium.com/@author/slug-<hex id> or medium.com/<publication>/slug-<hex id>
 MEDIUM_ARTICLE = re.compile(r"^/(@[^/]+|[^/@]+)/[^/]+-[0-9a-f]{8,12}$")
+MEDIUM_SENDER = "noreply@medium.com"
 
 
-def is_medium_digest(msg: Message, html: str) -> bool:
-    """Straight from Medium (filter forward keeps the sender) or forwarded by hand (links keep digest.reader)."""
-    return "noreply@medium.com" in (msg.get("From") or "") or "digest.reader" in html
+def sender(msg: Message, trusted: set[str]) -> str | None:
+    """The From address if Gmail verified it (DKIM of the From domain) and it is Medium or a trusted forwarder."""
+    addr = parseaddr(msg.get("From") or "")[1].lower()
+    if addr != MEDIUM_SENDER and addr not in trusted:
+        return None
+    # Gmail prepends its own header; anything below it may come from the sender and proves nothing
+    ours = next((v for v in msg.get_all("Authentication-Results") or [] if v.strip().startswith("mx.google.com")), "")
+    domain = addr.rsplit("@", 1)[-1]
+    return addr if re.search(rf"\bdkim=pass\b[^;]*header\.i=@{re.escape(domain)}\b", ours, re.I) else None
+
+
+def is_medium_digest(msg: Message, html: str, trusted: set[str]) -> bool:
+    """Straight from Medium (a filter forward keeps the sender) or forwarded by hand by a trusted address."""
+    who = sender(msg, trusted)
+    return who == MEDIUM_SENDER or (who is not None and "digest.reader" in html)
 
 
 def html_body(msg: Message) -> str | None:
@@ -44,7 +61,7 @@ def parse_medium_digest(html: str, received: datetime | None, source_key: str) -
     for a in lxml.html.fromstring(html).iter("a"):
         u = urlsplit(a.get("href") or "")
         host = (u.hostname or "").lower()
-        if not (host == "medium.com" or host.endswith(".medium.com") or "digest.reader" in u.query):
+        if not (host == "medium.com" or host.endswith(".medium.com")):
             continue
         if not MEDIUM_ARTICLE.match(u.path):
             continue
@@ -66,10 +83,10 @@ def parse_medium_digest(html: str, received: datetime | None, source_key: str) -
     return items
 
 
-def fetch(host: str, user: str, password: str, last_uid: int | None, since_days: int,
-          source_key: str) -> tuple[list[RawItem], int | None, dict]:
+def fetch(host: str, user: str, password: str, last_uid: int | None, since_days: int, source_key: str,
+          trusted: set[str]) -> tuple[list[RawItem], int | None, dict]:
     """New Medium digests since last_uid (first run: the last since_days days). Blocking: run in a thread."""
-    stats = {"messages": 0, "digests": 0}
+    stats = {"messages": 0, "digests": 0, "rejected": 0}
     items: list[RawItem] = []
     newest = last_uid
     m = imaplib.IMAP4_SSL(host)
@@ -88,7 +105,8 @@ def fetch(host: str, user: str, password: str, last_uid: int | None, since_days:
             stats["messages"] += 1
             newest = max(newest or 0, uid)
             html = html_body(msg)
-            if not html or not is_medium_digest(msg, html):
+            if not html or not is_medium_digest(msg, html, trusted):
+                stats["rejected"] += bool(html and "digest.reader" in html)  # looks like a digest, sender unverified
                 continue
             stats["digests"] += 1
             try:

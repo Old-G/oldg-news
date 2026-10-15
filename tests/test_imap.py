@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from email.message import EmailMessage
 
+import pytest
+
 from adapters.imap import is_medium_digest, parse_medium_digest
 
 Q = "?source=email-fb4a25e08c9f-1792021759698-digest.reader-5517fd7b58a6-590f1d528ecb----0-102-----x-1"
@@ -39,11 +41,35 @@ def test_parse_medium_digest_takes_story_cards_only():
     assert first.raw == {"urls": [first.url], "via": "medium daily digest", "author": "@jane.doe"}
 
 
-def test_digest_is_recognized_directly_and_when_forwarded_by_hand():
-    direct = EmailMessage()
-    direct["From"] = "Medium Daily Digest <noreply@medium.com>"
-    by_hand = EmailMessage()
-    by_hand["From"] = "Gleb <someone@gmail.com>"
-    assert is_medium_digest(direct, "<html></html>")
-    assert is_medium_digest(by_hand, DIGEST)
-    assert not is_medium_digest(by_hand, "<html>Security alert</html>")
+def mail(sender: str, auth: list[str]) -> EmailMessage:
+    m = EmailMessage()
+    m["From"] = sender
+    for v in auth:
+        m["Authentication-Results"] = v
+    return m
+
+
+GMAIL_OK = "mx.google.com; dkim=pass header.i=@gmail.com header.s=x; spf=pass smtp.mailfrom=me@gmail.com"
+MEDIUM_OK = "mx.google.com; dkim=pass header.i=@medium.com header.s=x; arc=pass"
+TRUSTED = {"me@gmail.com"}
+
+
+def test_digest_counts_only_when_gmail_verified_the_sender():
+    assert is_medium_digest(mail("Medium Daily Digest <noreply@medium.com>", [MEDIUM_OK]), "<html/>", TRUSTED)
+    assert is_medium_digest(mail("Me <me@gmail.com>", [GMAIL_OK]), DIGEST, TRUSTED)
+
+
+@pytest.mark.parametrize("sender, auth, html", [
+    ("Medium <noreply@medium.com>", ["mx.google.com; dkim=fail header.i=@medium.com"], DIGEST),  # spoofed From
+    ("Medium <noreply@medium.com>", [GMAIL_OK.replace("gmail.com", "evil.com")], DIGEST),       # signed by someone else
+    ("Medium <noreply@medium.com>", ["mx.google.com; spf=pass", MEDIUM_OK.replace("mx.google.com", "x")], DIGEST),
+    ("Stranger <stranger@gmail.com>", [GMAIL_OK.replace("me@", "stranger@")], DIGEST),         # a real but unknown sender
+    ("Me <me@gmail.com>", [GMAIL_OK], "<html>Security alert</html>"),                           # trusted, but not a digest
+])
+def test_everything_else_is_rejected(sender, auth, html):
+    assert not is_medium_digest(mail(sender, auth), html, TRUSTED)
+
+
+def test_links_off_medium_are_ignored():
+    html = DIGEST.replace("https://medium.com/data-science-collective/evals", "https://evil.example/data-science-collective/evals")
+    assert [i.title for i in parse_medium_digest(html, WHEN, "x")] == ["Building Agent Memory That Lasts Across Sessions and Restarts"]

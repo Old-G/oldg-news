@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     imap_host: str = "imap.gmail.com"
     imap_user: str = ""
     imap_password: str = ""
+    imap_trusted_from: str = ""  # comma-separated addresses whose hand-forwarded digests count (Gleb's own mail)
     imap_first_days: int = 2  # the first run reads this many days back, later runs go by the last UID
 
     # OpenAI

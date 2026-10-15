@@ -122,7 +122,8 @@ async def fetch_mail(conn, stats: dict, http: httpx.AsyncClient) -> None:
         return
     last = int(src.last_external_id) if src.last_external_id else None
     items, newest, got = await asyncio.to_thread(
-        imap.fetch, s.imap_host, s.imap_user, s.imap_password, last, s.imap_first_days, src.id
+        imap.fetch, s.imap_host, s.imap_user, s.imap_password, last, s.imap_first_days, src.id,
+        {a.strip().lower() for a in s.imap_trusted_from.split(",") if a.strip()},
     )
     st.update(got)
     await canonicalize(items, http)
