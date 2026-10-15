@@ -12,11 +12,10 @@ import logging
 import sys
 from datetime import timedelta
 
-from openai import AsyncOpenAI
 
 from config import get_settings
 from core import article
-from core.llm import Usage, complete_json, load_prompt, render
+from core.llm import Usage, complete_json, load_prompt, make_client, render
 from db import queries
 from jobs.daily import NO_PREVIEW, make_bot, today
 from jobs.fetch import setup_logging
@@ -45,7 +44,7 @@ async def run(preview_only: bool = False) -> dict:
                     prompt = load_prompt("weekly_ru")
                     user = render(prompt.user, week=f"{start.isoformat()} – {end.isoformat()}",
                                   stories=article.weekly_stories([(a, set(acts)) for a, acts in rows]))
-                    client = AsyncOpenAI(api_key=s.openai_api_key)
+                    client = make_client(s)
                     body = article.parse_weekly(
                         await complete_json(client, s, s.strong_model, prompt.system, user, usage))
                     queries.save_weekly_post(conn, start, body, s.strong_model)

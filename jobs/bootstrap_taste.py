@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from openai import AsyncOpenAI
 from telethon import utils
 
 from adapters import rss, telegram
@@ -56,7 +55,7 @@ async def bootstrap() -> None:
         async with rss.make_http_client(s.http_timeout_s) as http:
             source_id, stats["export"] = await export_notes(conn, http)
         stats["normalize"] = normalize_pending(conn)
-        openai = AsyncOpenAI(api_key=s.openai_api_key)
+        openai = llm.make_client(s)
         stats["embed"] = await embed.embed_pending(conn, openai, s)
         stats["note_stories"] = queries.bootstrap_note_stories(conn, source_id)
         conn.commit()

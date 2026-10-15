@@ -48,6 +48,10 @@ class Usage:
                 "usd": round(self.usd, 4), "by_model": self.by_model}
 
 
+def make_client(s: Settings) -> AsyncOpenAI:
+    return AsyncOpenAI(api_key=s.openai_api_key, timeout=s.llm_timeout_s, max_retries=2)
+
+
 def price(s: Settings, model: str) -> tuple[float, float]:
     """USD per 1M input / output tokens; unknown models count as 0 and show up in runs.stats by name."""
     return s.llm_prices.get(model, (0.0, 0.0))

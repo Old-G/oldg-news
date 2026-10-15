@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     embed_model: str = ""
     cheap_model: str = ""
     strong_model: str = ""
+    llm_timeout_s: float = 180.0  # the SDK default is 10 min: one stuck call held a whole preview
 
     # Fetch
     tg_backfill_hours: int = 48

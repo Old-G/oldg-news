@@ -30,7 +30,7 @@ from adapters.rss import make_http_client
 from bot.keyboards import feedback_keyboard
 from config import Settings, get_settings
 from core import article, digest, enrich, score
-from core.llm import Usage, complete_json, load_prompt, render
+from core.llm import Usage, complete_json, load_prompt, make_client, render
 from core.normalize import is_specific_url
 from db import queries
 from jobs.fetch import setup_logging
@@ -313,7 +313,7 @@ async def run(mode: str, wave: int | None = None, rewrite: bool = False) -> dict
     s = get_settings()
     conn = queries.connect(s.database_url)
     run_id = queries.start_run(conn, {"prepare": "daily"}.get(mode, mode))
-    ctx = Ctx(conn, s, AsyncOpenAI(api_key=s.openai_api_key), make_http_client(s.http_timeout_s), Usage(), {})
+    ctx = Ctx(conn, s, make_client(s), make_http_client(s.http_timeout_s), Usage(), {})
     bot = make_bot(s) if mode != "prepare" else None
     try:
         if mode == "prepare":

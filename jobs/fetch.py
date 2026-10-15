@@ -7,12 +7,12 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from openai import AsyncOpenAI
 from telethon import utils
 
 from adapters import RawItem, rss, telegram
 from config import get_settings
 from core import cluster, embed, normalize
+from core.llm import make_client
 from db import queries
 
 log = logging.getLogger("fetch")
@@ -162,7 +162,7 @@ async def run() -> list[str]:
         if name == "normalize":
             return normalize_pending(conn)
         if name == "embed":
-            return await embed.embed_pending(conn, AsyncOpenAI(api_key=s.openai_api_key), s)
+            return await embed.embed_pending(conn, make_client(s), s)
         return cluster.cluster_pending(conn, s)
 
     for name in ("normalize", "embed", "cluster"):
