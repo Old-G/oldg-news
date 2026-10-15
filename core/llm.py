@@ -1,5 +1,6 @@
 """Prompts from prompts/*.md and LLM calls with token and cost accounting."""
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,3 +62,23 @@ async def complete(client: AsyncOpenAI, s: Settings, model: str, system: str, us
     usage.usd += (r.usage.input_tokens * p_in + r.usage.output_tokens * p_out) / 1_000_000
     usage.by_model[model] = usage.by_model.get(model, 0) + 1
     return r.output_text.strip()
+
+
+JSON_RETRY = "Return valid JSON only."
+_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
+
+
+def parse_json(text: str):
+    """A model's JSON answer; a ```json fence around it is cut off. Invalid JSON raises ValueError."""
+    t = text.strip()
+    if m := _FENCE.match(t):
+        t = m.group(1)
+    return json.loads(t)
+
+
+async def complete_json(client: AsyncOpenAI, s: Settings, model: str, system: str, user: str, usage: Usage):
+    """complete() parsed as JSON; on invalid JSON one more call with «Return valid JSON only», then it raises."""
+    try:
+        return parse_json(await complete(client, s, model, system, user, usage))
+    except ValueError:
+        return parse_json(await complete(client, s, model, system, f"{user}\n\n{JSON_RETRY}", usage))
