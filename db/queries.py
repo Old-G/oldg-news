@@ -332,9 +332,10 @@ def note_items(conn: psycopg.Connection, source_id: int, limit: int | None = Non
 
 
 def create_taste_profile(
-    conn: psycopg.Connection, text: str, built_from: dict, centroids: list[tuple[np.ndarray, int]]
+    conn: psycopg.Connection, text: str, built_from: dict, centroids: list[tuple[np.ndarray, int]],
+    neg_centroids: list[tuple[np.ndarray, int]] = (),
 ) -> tuple[int, int]:
-    """A new inactive version with its positive centroids; returns (id, version)."""
+    """A new inactive version with its centroids; returns (id, version)."""
     profile_id, version = conn.execute(
         """
         insert into taste_profiles (version, profile_text, built_from)
@@ -347,6 +348,10 @@ def create_taste_profile(
         cur.executemany(
             "insert into taste_centroids (profile_id, polarity, centroid, n_items) values (%s, 'pos', %s, %s)",
             [(profile_id, c, int(n)) for c, n in centroids],
+        )
+        cur.executemany(
+            "insert into taste_centroids (profile_id, polarity, centroid, n_items) values (%s, 'neg', %s, %s)",
+            [(profile_id, c, int(n)) for c, n in neg_centroids],
         )
     return profile_id, version
 
@@ -369,14 +374,17 @@ def active_profile(conn: psycopg.Connection) -> tuple[int, str] | None:
 def ranking_candidates(conn: psycopg.Connection, profile_id: int, window_h: int) -> list[dict]:
     """New stories seen within the window with what prefilter, score and select need.
 
-    prefilter_sim = max cosine to the active profile's positive centroids (spec: prefilter query);
+    prefilter_sim = max cosine to the active profile's positive centroids minus half the max cosine to its
+    negative ones (spec: weekly taste; no negative centroids yet → 0);
     kinds: an rss feed on github.com counts as 'github'; avg_weight over the story's distinct sources.
     """
     rows = conn.execute(
         """
         select s.id,
                (select max(1 - (s.centroid <=> c.centroid)) from taste_centroids c
-                 where c.profile_id = %s and c.polarity = 'pos'),
+                 where c.profile_id = %s and c.polarity = 'pos')
+               - 0.5 * coalesce((select max(1 - (s.centroid <=> c.centroid)) from taste_centroids c
+                                  where c.profile_id = %s and c.polarity = 'neg'), 0),
                s.heat,
                array_agg(distinct case when src.kind = 'rss' and src.external_id like '%%github.com/%%'
                                        then 'github' else src.kind end),
@@ -390,7 +398,7 @@ def ranking_candidates(conn: psycopg.Connection, profile_id: int, window_h: int)
          where s.status = 'new' and s.last_seen_at > now() - make_interval(hours => %s)
          group by s.id
         """,
-        (profile_id, window_h),
+        (profile_id, profile_id, window_h),
     ).fetchall()
     keys = ("story_id", "sim", "heat", "kinds", "manual", "notes", "avg_weight", "enriched", "category",
             "llm_score", "owner_actions")
@@ -655,3 +663,117 @@ def add_drafts(conn: psycopg.Connection, story_id: int, rows: list[tuple[str, st
             "insert into drafts (story_id, lang, channel, text, model) values (%s, %s, %s, %s, %s)",
             [(story_id, lang, channel, text, model) for lang, channel, text in rows],
         )
+
+
+# --- weekly taste and /missed --------------------------------------------------
+
+POSITIVE = "(f.action in ('star', 'up', 'missed') and f.origin in ('bot', 'notes'))"
+NEGATIVE = "(f.action = 'down' and f.origin = 'bot')"
+# a notes post is dated by the post itself (its story's first_seen_at); a bot press by the press
+_SIGNAL_AT = "case when f.origin = 'notes' then s.first_seen_at else f.created_at end"
+
+
+def taste_vectors(conn: psycopg.Connection, positive: bool) -> list[np.ndarray]:
+    """Centroids of every story the owner marked: positive (⭐ / 👍 / missed / notes) or negative (👎)."""
+    rows = conn.execute(
+        f"""
+        select distinct on (s.id) s.centroid from feedback f join stories s on s.id = f.story_id
+         where {POSITIVE if positive else NEGATIVE} and s.centroid is not null
+        """
+    ).fetchall()
+    return [r[0].to_numpy() for r in rows]
+
+
+def taste_signals(conn: psycopg.Connection, positive: bool, days: int, limit: int) -> list[tuple]:
+    """(signal_at, title, text, url, forwarded, action, origin) of marked stories within `days`, newest first.
+    Text: the enrich summary, else the longest item text."""
+    return conn.execute(
+        f"""
+        select * from (
+          select distinct on (s.id) {_SIGNAL_AT} as at, s.title,
+                 coalesce(s.summary, (select i.text from items i where i.story_id = s.id
+                                       order by length(coalesce(i.text, '')) desc limit 1)),
+                 s.canonical_url,
+                 exists (select 1 from items i where i.story_id = s.id and i.raw ? 'fwd_from_channel_id'),
+                 f.action, f.origin
+            from feedback f join stories s on s.id = f.story_id
+           where {POSITIVE if positive else NEGATIVE} and {_SIGNAL_AT} > now() - make_interval(days => %s)
+           order by s.id, f.origin = 'bot' desc, f.created_at desc
+        ) t order by at desc limit %s
+        """,
+        (days, limit),
+    ).fetchall()
+
+
+def signal_counts(conn: psycopg.Connection) -> dict[str, int]:
+    """Stories per kind of positive signal: notes, star, up, missed."""
+    rows = conn.execute(
+        f"""
+        select case when f.origin = 'notes' then 'notes' else f.action end, count(distinct f.story_id)
+          from feedback f where {POSITIVE} group by 1
+        """
+    ).fetchall()
+    return dict(rows)
+
+
+def active_profile_row(conn: psycopg.Connection) -> tuple[int, int, str] | None:
+    """(id, version, profile_text) of the active profile."""
+    return conn.execute("select id, version, profile_text from taste_profiles where is_active").fetchone()
+
+
+def missed_reasons(conn: psycopg.Connection, days: int) -> dict[str, int]:
+    rows = conn.execute(
+        "select stats->>'reason', count(*) from runs where job = 'missed' and started_at > now() - make_interval(days => %s)"
+        " group by 1",
+        (days,),
+    ).fetchall()
+    return {r: n for r, n in rows if r}
+
+
+def find_story_by_url(conn: psycopg.Connection, url: str) -> int | None:
+    """The newest story holding this URL as its main link, an item's link or one of an item's links."""
+    row = conn.execute(
+        """
+        select s.id from stories s
+         where s.canonical_url = %s
+            or exists (select 1 from items i where i.story_id = s.id and (i.url = %s or %s = any(i.urls)))
+         order by s.last_seen_at desc limit 1
+        """,
+        (url, url, url),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def missed_facts(conn: psycopg.Connection, story_id: int, window_h: int) -> dict:
+    """What core.missed.cut_reason needs: the story's state, its digest, the digests built while it was
+    a candidate (first seen … last seen + window) and the lowest final_score they picked."""
+    row = conn.execute(
+        """
+        select s.status, s.enriched_at is not null, s.prefilter_sim, s.llm_score, s.final_score,
+               (select min(d.for_date) from digest_entries e join digests d on d.id = e.digest_id
+                 where e.story_id = s.id),
+               (select count(*) from digests d where d.created_at between s.first_seen_at
+                   and s.last_seen_at + make_interval(hours => %s) and exists (
+                     select 1 from digest_entries e where e.digest_id = d.id)),
+               (select min(x.final_score) from digests d join digest_entries e on e.digest_id = d.id
+                  join stories x on x.id = e.story_id
+                 where e.section = 'top' and d.created_at between s.first_seen_at
+                   and s.last_seen_at + make_interval(hours => %s)),
+               exists (select 1 from feedback f where f.story_id = s.id and f.action = 'down' and f.origin = 'bot'),
+               s.first_seen_at, s.title
+          from stories s where s.id = %s
+        """,
+        (window_h, window_h, story_id),
+    ).fetchone()
+    keys = ("status", "enriched", "prefilter_sim", "llm_score", "final_score", "digest_date", "digests_since",
+            "cutoff", "owner_down", "first_seen_at", "title")
+    return dict(zip(keys, row))
+
+
+def create_missed_story(conn: psycopg.Connection, url: str) -> int:
+    """A record for a URL no source had: dismissed at once, so it never enters a digest; carries the missed feedback."""
+    return conn.execute(
+        "insert into stories (canonical_url, title, first_seen_at, last_seen_at, status)"
+        " values (%s, %s, now(), now(), 'dismissed') returning id",
+        (url, url),
+    ).fetchone()[0]

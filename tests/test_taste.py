@@ -44,3 +44,30 @@ def test_format_item_for_the_prompt():
         "- 2026-09-29 | Hindsight. Новая агентная память. | forwarded post | github.com\n"
         "  У проекта 42k звёзд\n  В чём проблема\n  ещё"
     )
+
+
+def test_signal_label_replaces_the_notes_kind():
+    from core.taste import SIGNAL_LABELS
+    it = NoteItem(datetime(2026, 10, 15, tzinfo=timezone.utc), "Scion", "Anthropic moved off git", "https://anthropic.com/x",
+                  False, SIGNAL_LABELS[("star", "bot")])
+    assert format_item(it).startswith("- 2026-10-15 | Scion | starred in his digest | anthropic.com")
+
+
+def test_neg_k_waits_for_enough_downvotes():
+    from core.taste import neg_k
+    assert (neg_k(0, 3), neg_k(2, 3), neg_k(3, 3), neg_k(40, 3)) == (0, 0, 3, 3)
+
+
+def test_profile_diff_and_message():
+    from core.taste import diff_message, profile_diff
+    d = profile_diff("1. Core\n- agents\n- rag\n", "1. Core\n- agents & memory\n- rag\n")
+    assert d == ["− - agents", "+ - agents & memory"]
+    built = {"signals": {"notes": 89, "star": 2}, "positive": 91, "negative": 0, "k_pos": 8, "k_neg": 0,
+             "profile_from": 91, "window_days": 90}
+    msg = diff_message(1, 2, built, d, {"prefilter": 2, "not_in_db": 1}, activated=True)
+    assert msg.startswith("🧭 <b>Профиль вкуса v2</b> (был v1)\nПозитив: 91 (заметки 89, ⭐ 2, 👍 0, missed 0) · 👎 0")
+    assert "Missed за неделю: prefilter 2 · not_in_db 1" in msg
+    assert "<blockquote expandable>− - agents\n+ - agents &amp; memory</blockquote>" in msg
+    assert msg.endswith("--activate 1</code>")
+    long = diff_message(1, 2, built, ["+ " + "x" * 100] * 100, {}, activated=False)
+    assert len(long) <= 4096 and "--activate 2" in long

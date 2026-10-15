@@ -1,5 +1,7 @@
 """Taste profile: centroids for the cheap prefilter + text for the score prompt."""
 
+import difflib
+import html
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,12 +44,20 @@ class NoteItem:
     text: str | None
     url: str | None
     forwarded: bool
+    label: str | None = None  # source kind for the prompt when it is not a notes post («starred in digest»…)
+
+
+# feedback (action, origin) → the item's source kind in the taste_profile prompt
+SIGNAL_LABELS = {
+    ("star", "notes"): None, ("star", "bot"): "starred in his digest", ("up", "bot"): "upvoted in his digest",
+    ("missed", "bot"): "he found it elsewhere: the digest missed it", ("down", "bot"): "downvoted in his digest",
+}
 
 
 def format_item(it: NoteItem) -> str:
     """The prompt's item: date, title, source kind, 1–3 lines of text or summary, URL domain."""
     date = it.published_at.date().isoformat() if it.published_at else "?"
-    kind = "forwarded post" if it.forwarded else "saved link"
+    kind = it.label or ("forwarded post" if it.forwarded else "saved link")
     domain = (urlsplit(it.url).hostname or "").removeprefix("www.") if it.url else "-"
     title = re.sub(r"\s+", " ", it.title or "").strip()
     lines = [
@@ -78,3 +88,41 @@ async def write_profile(
     parts = [await one(positive[i : i + s.taste_chunk_n]) for i in range(0, len(positive), s.taste_chunk_n)]
     merge_input = f"{MERGE_INSTRUCTION}:\n\n" + "\n\n---\n\n".join(parts)
     return await llm.complete(client, s, model, prompt.system, merge_input, usage)
+
+
+def neg_k(n: int, k: int) -> int:
+    """Negative centroids: k of them once there are enough downvotes, none before (one stray 👎 is not a taste)."""
+    return k if n >= k else 0
+
+
+def profile_diff(old: str, new: str) -> list[str]:
+    """Changed lines only: «+ …» added, «− …» removed (unified diff without headers and context)."""
+    out = []
+    for line in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0):
+        if line.startswith(("+++", "---", "@@")):
+            continue
+        if line[1:].strip():
+            out.append(("+ " if line[0] == "+" else "− ") + line[1:].strip())
+    return out
+
+
+def diff_message(old_version: int | None, new_version: int, built_from: dict, diff: list[str],
+                 missed: dict[str, int], activated: bool, limit: int = 4096) -> str:
+    """The weekly message to the owner's DM (Telegram HTML): what the profile was built from, what changed."""
+    counts = built_from["signals"]
+    head = [f"🧭 <b>Профиль вкуса v{new_version}</b>" + (f" (был v{old_version})" if old_version else ""),
+            f"Позитив: {built_from['positive']} (заметки {counts.get('notes', 0)}, ⭐ {counts.get('star', 0)}, "
+            f"👍 {counts.get('up', 0)}, missed {counts.get('missed', 0)}) · 👎 {built_from['negative']}",
+            f"Центроиды: {built_from['k_pos']} pos, {built_from['k_neg']} neg · текст по {built_from['profile_from']} "
+            f"сигналам за {built_from['window_days']} дн."]
+    if missed:
+        head.append("Missed за неделю: " + " · ".join(f"{k} {v}" for k, v in sorted(missed.items(), key=lambda x: -x[1])))
+    tail = ("Активен с этого момента. Откат: <code>python -m jobs.bootstrap_taste --activate "
+            f"{old_version}</code>" if activated and old_version else
+            "Превью: версия не активна. Включить: <code>python -m jobs.bootstrap_taste --activate "
+            f"{new_version}</code>" if not activated else "Активен.")
+    body = "\n".join(html.escape(d) for d in diff) or "Текст не изменился."
+    room = limit - len("\n".join(head)) - len(tail) - 80
+    if len(body) > room:
+        body = body[:room].rsplit("\n", 1)[0] + "\n…"
+    return "\n".join(head) + f"\n\n<b>Что изменилось</b>\n<blockquote expandable>{body}</blockquote>\n{tail}"

@@ -1,7 +1,7 @@
 """worker: the scheduler (spec: «Расписание», time of the digest timezone).
 
 fetch at :00 every FETCH_EVERY_H hours; daily preparation at DIGEST_PREPARE_AT, the waves at DIGEST_WAVES,
-the weekly post at WEEKLY_POST_AT, ⭐ drafts every DRAFTS_POLL_S seconds. DIGEST_WAVES=[] pauses everything that publishes (and the preparation).
+the weekly post at WEEKLY_POST_AT, the taste profile at WEEKLY_TASTE_AT, ⭐ drafts every DRAFTS_POLL_S seconds. DIGEST_WAVES=[] pauses everything that publishes (and the preparation).
 """
 
 import asyncio
@@ -12,7 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from config import get_settings
-from jobs import daily, drafts, fetch, weekly
+from jobs import daily, drafts, fetch, weekly, weekly_taste
 
 log = logging.getLogger("worker")
 
@@ -44,6 +44,13 @@ async def run_drafts() -> None:
         log.exception("drafts failed")
 
 
+async def run_weekly_taste() -> None:
+    try:
+        await weekly_taste.run()
+    except Exception:
+        log.exception("weekly_taste failed")
+
+
 async def run_weekly() -> None:
     try:
         await weekly.run()
@@ -67,6 +74,9 @@ async def main() -> None:
         hour, minute = hhmm.split(":")
         return CronTrigger(hour=int(hour), minute=int(minute), timezone=tz, **kw)
 
+    if s.weekly_taste_at != "off":  # publishes nothing: runs even when the waves are paused
+        day, hhmm = s.weekly_taste_at.split()
+        scheduler.add_job(run_weekly_taste, at(hhmm, day_of_week=day), id="weekly_taste", **common)
     if s.digest_waves:
         scheduler.add_job(run_prepare, at(s.digest_prepare_at), id="prepare", **common)
         if s.weekly_post_at != "off":  # an empty value in .env is ignored, so off is a word
