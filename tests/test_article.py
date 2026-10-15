@@ -48,13 +48,13 @@ def test_parse_article_requires_the_core_and_cleans_fields():
 
 
 def test_render_article_matches_the_spec_format():
-    m = Meta(1, 7, ["agents", "memory"], ["https://www.anthropic.com/news/x", "https://t.me/chan/5"])
+    m = Meta(1, 4, ["agents", "coding-agents"], ["https://www.anthropic.com/news/x", "https://t.me/chan/5"], "release")
     assert render_article(parse_article(ARTICLE), m) == (
-        "1 · 🔥 heat 7 · agents, memory\n<b>Anthropic открыла &lt;MCP&gt; 2</b>\n\n"
+        "🚀 <b>Anthropic открыла &lt;MCP&gt; 2</b>\n<i>#1 · 🔥 4 источника · #agents #coding_agents</i>\n\n"
         "Что случилось.\n\n"
-        "• Деталь 1\n• Деталь &amp; 2\n\n"
-        "<b>Почему важно.</b> Почему.\n<b>Оговорки.</b> Цена не указана.\n\n"
-        'Источники: <a href="https://www.anthropic.com/news/x">anthropic.com</a> · <a href="https://t.me/chan/5">t.me/chan</a>'
+        "💡 Почему.\n\n"
+        "<blockquote expandable>▸ Деталь 1\n▸ Деталь &amp; 2\n\n⚠️ <b>Оговорки:</b> Цена не указана.</blockquote>\n"
+        '🔗 <a href="https://www.anthropic.com/news/x">anthropic.com</a> · <a href="https://t.me/chan/5">t.me/chan</a>'
     )
 
 
@@ -66,15 +66,16 @@ def test_render_article_drops_details_to_fit_a_message():
 
 def test_render_card_fallback():
     assert render_card("T", "S.", "W.", Meta(3, 1, [], ["https://x.dev/a"])) == (
-        '3\n<b>T</b>\n\nS.\n<b>Почему важно.</b> W.\n\nИсточники: <a href="https://x.dev/a">x.dev</a>')
+        '📰 <b>T</b>\n<i>#3</i>\n\nS.\n\n💡 W.\n\n🔗 <a href="https://x.dev/a">x.dev</a>')
 
 
 def test_render_overview():
     ov = parse_overview({"summary": "Сводка.", "direction": "Тренд."})
     text = render_overview(date(2026, 10, 16), ov, ["Первая", "Вторая & третья"], ["3–5 — в 13:00", "🌱 ранние сигналы — в 19:00"])
-    assert text == ("<b>Главное за сутки · 16 окт</b>\nСводка.\n\n<b>Куда движемся</b>\nТренд.\n\n"
-                    "<b>Сегодня</b>\n1. Первая\n2. Вторая &amp; третья\n3–5 — в 13:00 · 🌱 ранние сигналы — в 19:00")
-    assert render_overview(date(2026, 10, 16), None, ["Одна"], []) == "<b>Главное за сутки · 16 окт</b>\n<b>Сегодня</b>\n1. Одна"
+    assert text == ("☕️ <b>Главное за 16 октября</b>\n\nСводка.\n\n🧭 <b>Куда движемся:</b> Тренд.\n\n"
+                    "<b>В выпуске</b>\n1️⃣ Первая\n2️⃣ Вторая &amp; третья\n\n"
+                    "<i>⏰ 3–5 — в 13:00 · 🌱 ранние сигналы — в 19:00</i>")
+    assert render_overview(date(2026, 10, 16), None, ["Одна"], []) == "☕️ <b>Главное за 16 октября</b>\n\n<b>В выпуске</b>\n1️⃣ Одна"
     with pytest.raises(ValueError):
         parse_overview({"summary": "only"})
 
@@ -85,6 +86,6 @@ def test_weekly():
     w = parse_weekly({"intro": "Неделя.", "watch": None, "trends": [
         {"name": "Агенты", "evidence": "A и B.", "direction": "Дальше.", "try": "Проверить."}, {"name": "", "evidence": "x"}]})
     assert render_weekly(date(2026, 10, 12), date(2026, 10, 18), w) == (
-        "<b>Неделя: куда движемся · 12–18 окт</b>\nНеделя.\n\n<b>1. Агенты</b>\nA и B.\nДальше.\n<i>Попробовать:</i> Проверить.")
+        "🗓 <b>Неделя: куда движемся</b>\n<i>12–18 окт</i>\n\nНеделя.\n\n1️⃣ <b>Агенты</b>\nA и B.\n🧭 Дальше.\n🧪 Проверить.")
     with pytest.raises(ValueError):
         parse_weekly({"trends": []})

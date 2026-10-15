@@ -439,21 +439,21 @@ USER
 
 ```text
 SYSTEM
-You write one mini-article in Russian for a Telegram channel about AI engineering. The reader is a practicing AI engineer who builds agentic systems, MCP servers and support automation in production. He will NOT open the original sources: the article must stand on its own — every fact, number, name and mechanism he needs is in your text.
+You write one short mini-article in Russian for a Telegram channel about AI engineering. The reader is a practicing AI engineer who builds agentic systems, MCP servers and support automation in production. He will NOT open the original sources: the article must stand on its own — the facts, numbers, names and mechanism he needs are in your text. He reads it on a phone: short, concrete, scannable.
 
 Output strict JSON only, no prose, no code fences:
 {
-  "title": <Russian headline, ≤ 90 chars: the point, not the press-release name; no emoji, no clickbait>,
-  "lead": <1–2 sentences: what happened and who did it>,
-  "details": <array of 2–5 short strings: how it works, key numbers, versions, availability, price, license — only what the sources state>,
-  "why_it_matters": <1–2 sentences: what concretely changes for someone building agents>,
-  "try": <one sentence: what he could test or check first; null if nothing actionable>,
-  "caveats": <one sentence on limits, open questions or contradictions between sources; null if none>
+  "title": <Russian headline, ≤ 70 chars: the point, not the press-release name; product names as written; no emoji, no clickbait>,
+  "lead": <1–2 short sentences, ≤ 250 chars: what happened, who did it, the one thing that is new>,
+  "details": <array of 3–4 strings, each ≤ 140 chars and one fact: how it works, a key number, version, availability — only what the sources state>,
+  "why_it_matters": <one sentence, ≤ 180 chars: what concretely changes for someone building agents>,
+  "try": <one sentence, ≤ 140 chars: what he could test or check first; null if nothing actionable>,
+  "caveats": <one sentence, ≤ 140 chars: the main limit, open question or contradiction; null if none>
 }
 
 Rules:
-- Facts only from SOURCES. Never invent numbers, names, benchmarks or capabilities. If something important is missing (price, availability, license), say it is not stated instead of guessing.
-- All fields together: 900–1700 characters. Plain text inside fields, no markdown.
+- Facts only from SOURCES. Never invent numbers, names, benchmarks or capabilities. Do not list what the sources leave out (price, license, availability) unless its absence matters for using the thing — then say so once, in caveats.
+- All fields together: 500–1000 characters. Plain text inside fields, no markdown. Every sentence carries a fact; no filler, no restating the title.
 - Russian; technical terms stay in English the way engineers say them (agent, eval, fine-tuning, MCP, context window). Numbers and names exactly as in the sources.
 - Calm practitioner voice: no hype words, no exclamation marks.
 - Several sources describe one story: merge them into one account, do not list or compare the sources.
@@ -468,10 +468,10 @@ SOURCES:
 
 ```text
 SYSTEM
-You write the opening post of a daily AI-engineering digest in Russian. The reader is an AI engineer who builds agentic systems; below are today's stories, already written up. Output strict JSON only: {"summary": "...", "direction": "..."}.
+You write the opening post of a daily AI-engineering digest in Russian. The reader is an AI engineer who builds agentic systems; below are today's stories, already written up, each with its own post. This post is the 20-second version, read on a phone. Output strict JSON only: {"summary": "...", "direction": "..."}.
 
-summary: 2–4 sentences on what moved today. Group the stories into 1–3 themes and name the concrete things (products, numbers), never "много новостей".
-direction: 1–2 sentences, «куда движемся»: the trend today's stories point to and what it means for people building agents. Grounded in today's stories; if they share nothing, name the strongest single signal instead.
+summary: 1–2 short sentences, ≤ 280 chars: the day's main theme, naming 2–3 concrete things (products, numbers). Do not retell every story — the table of contents lists them.
+direction: one sentence, ≤ 160 chars, «куда движемся»: the trend today's stories point to and what it means for people building agents. Grounded in today's stories; if they share nothing, name the strongest single signal instead.
 
 Rules: Russian, technical terms in English; facts only from the stories; calm, no hype, no exclamation marks; plain text, no markdown.
 
@@ -552,63 +552,68 @@ Best source excerpt:
 
 Worker публикует дайджест в твой существующий Telegram-канал (DIGEST\_CHANNEL\_ID, бот — админ канала) тремя волнами в течение дня, чтобы читать порциями, а не всё разом: утром (07:30) — пост-обзор дня и мини-статьи 1–3, днём (13:00) — мини-статьи 4–`DIGEST_N`, вечером (19:00) — секция «Ранние сигналы». Одна мини-статья — один пост со своим рядом кнопок: кнопки привязаны к сообщению, реакция ставится в одно касание с телефона. Мини-статья самодостаточна — открывать оригиналы не нужно, ссылки внизу только для проверки, поэтому превью ссылки выключено. Дайджест с первого дня — публичный контент, поэтому в постах нет ничего личного; статистика и команды живут в личке бота. Все тексты — HTML-разметка Telegram, ≤ 4096 символов на сообщение; всё, что пришло от модели, экранируется.
 
+Оформление — под телефон: главное видно сразу, подробности свёрнуты в раскрывающуюся цитату (`<blockquote expandable>`), у категории иконка (🚀 release · 📄 paper · 🛠 tool · ⚙️ infra · 🤖 agent · 💼 business · 📰 other), теги — хештеги канала (`coding-agents` → `#coding_agents`), по ним работает поиск в канале.
+
 Пост-обзор дня, первым в утренней волне (строка «Вчера: 👍 3 · 👎 1 · ⭐ 1» уходит отдельно в личку бота, не в канал):
 
 ```text
-<b>Главное за сутки · 16 окт</b>
+☕️ <b>Главное за 16 октября</b>
+
 {overview.summary}
 
-<b>Куда движемся</b>
-{overview.direction}
+🧭 <b>Куда движемся:</b> {overview.direction}
 
-<b>Сегодня</b>
-1. {article.title}
-2. {article.title}
+<b>В выпуске</b>
+1️⃣ {article.title}
+2️⃣ {article.title}
 …
-4–6 — в 13:00 · 🌱 ранние сигналы — в 19:00
+
+<i>⏰ 4–6 — в 13:00 · 🌱 ранние сигналы — в 19:00</i>
 ```
 
 Оглавление собирается кодом из заголовков мини-статей секции `top`; последняя строка — только про то, что ещё будет (нет второй волны или ранних сигналов — нет и упоминания).
 
-Мини-статья (поля из `stories.article`; пустые `try` и `caveats` не выводятся):
+Мини-статья (поля из `stories.article`; пустые `try` и `caveats` не выводятся; строка «🔥 N источников» — при heat ≥ 2):
 
 ```text
-1 · 🔥 heat 7 · agents, memory
-<b>{title}</b>
+🛠 <b>{title}</b>
+<i>#1 · 🔥 4 источника · #agents #mcp</i>
 
 {lead}
 
-• {details[0]}
-• {details[1]}
+💡 {why_it_matters}
+
+<blockquote expandable>▸ {details[0]}
+▸ {details[1]}
 …
 
-<b>Почему важно.</b> {why_it_matters}
-<b>Попробовать.</b> {try}
-<b>Оговорки.</b> {caveats}
-
-Источники: <a href="{url}">{домен}</a> · <a href="{url}">{домен}</a>
+🧪 <b>Попробовать:</b> {try}
+⚠️ <b>Оговорки:</b> {caveats}</blockquote>
+🔗 <a href="{url}">{домен}</a> · <a href="{url}">{домен}</a>
 ```
 
-В строке «Источники» — до 3 ссылок: основная, затем другие конкретные ссылки истории, затем пост в Telegram-канале, откуда история пришла. Если мини-статьи нет (шаг 10), пост — короткая карточка: та же первая строка, `<b>{title_clean}</b>`, `{summary}`, `<b>Почему важно.</b> {why_it_matters}`, источники.
+В строке 🔗 — до 3 ссылок: основная, затем другие конкретные ссылки истории, затем пост в Telegram-канале, откуда история пришла. Если мини-статьи нет (шаг 10), пост — короткая карточка: та же шапка с `title_clean`, `{summary}`, `💡 {why_it_matters}`, ссылки.
 
 Кнопки под каждой мини-статьёй: `👍` · `👎` · `⭐ пост`. После нажатия кнопки заменяются на отметку (`✓ 👍`), чтобы не нажимать дважды; `⭐` после `👍` разрешена, обратный ход — нет. В канале кнопки видят и подписчики: нажатия с твоего user id идут в профиль вкуса (origin bot), чужие пишутся как origin audience и в ранжирование не входят — это отдельный сигнал об аудитории; ⭐ срабатывает только для тебя.
 
-Секция «Ранние сигналы» — те же мини-статьи, заголовок секции отдельным сообщением: `🌱 Ранние сигналы — есть на HN/arXiv/HF, в каналах ещё нет`. Здесь ценны `👎` не меньше `👍`: они быстрее всего настраивают порог сигнала.
+Секция «Ранние сигналы» — те же мини-статьи, заголовок секции отдельным сообщением: `🌱 Ранние сигналы` / `Уже на HN, arXiv и HF — в каналах ещё нет`. Здесь ценны `👎` не меньше `👍`: они быстрее всего настраивают порог сигнала.
 
 Пост «Неделя: куда движемся», воскресенье, без кнопок:
 
 ```text
-<b>Неделя: куда движемся · 13–19 окт</b>
+🗓 <b>Неделя: куда движемся</b>
+<i>13–19 окт</i>
+
 {intro}
 
-<b>1. {trend.name}</b>
+1️⃣ <b>{trend.name}</b>
 {trend.evidence}
-{trend.direction}
-<i>Попробовать:</i> {trend.try}
+🧭 {trend.direction}
+🧪 {trend.try}
 
-<b>2. …</b>
+2️⃣ …
 
-<b>Присмотреться:</b> {watch}
+👀 <b>Присмотреться:</b> {watch}
 ```
 
 По `⭐` бот отвечает тремя сообщениями: RU-черновик, EN X-черновик, EN LinkedIn-черновик — чистым текстом без разметки, чтобы копировалось как есть. Публикация руками в v1.

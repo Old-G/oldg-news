@@ -181,6 +181,13 @@ def week_label(start: date, end: date) -> str:
 
 
 # --- rendering -----------------------------------------------------------------
+# Phone first: the point is visible at once, the details sit in an expandable quote (Bot API 7.4+).
+
+CATEGORY_ICON = {"release": "🚀", "paper": "📄", "tool": "🛠", "infra": "⚙️", "agent": "🤖", "business": "💼"}
+KEYCAPS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября",
+              "ноября", "декабря"]
+
 
 @dataclass
 class Meta:
@@ -188,6 +195,7 @@ class Meta:
     heat: int
     tags: list[str]
     links: list[str]  # main first, then the other specific links, then the Telegram post
+    category: str | None = None
 
 
 def _e(s: str) -> str:
@@ -201,34 +209,47 @@ def _source_links(links: list[str]) -> str:
         host = (p.hostname or "").removeprefix("www.")
         label = f"{host}/{p.path.strip('/').split('/')[0]}" if host == "t.me" else host
         parts.append(f'<a href="{html.escape(u)}">{_e(label or u)}</a>')
-    return "Источники: " + " · ".join(parts) if parts else ""
+    return "🔗 " + " · ".join(parts) if parts else ""
 
 
-def _meta_line(m: Meta) -> str:
-    meta = [str(m.position)]
+def _hashtag(tag: str) -> str:
+    return "#" + re.sub(r"\W", "_", tag.replace("-", "_"))
+
+
+def _head(title: str, m: Meta) -> str:
+    """Icon + bold title, then a quiet line: number, how many sources, tags as channel hashtags."""
+    meta = [f"#{m.position}"]
     if m.heat >= 2:
-        meta.append(f"🔥 heat {m.heat}")
+        meta.append(f"🔥 {m.heat} {_plural(m.heat, 'источник', 'источника', 'источников')}")
     if m.tags:
-        meta.append(", ".join(m.tags))
-    return " · ".join(meta)
+        meta.append(" ".join(_hashtag(t) for t in m.tags[:3]))
+    icon = CATEGORY_ICON.get(m.category or "", "📰")
+    return f"{icon} <b>{_e(title)}</b>\n<i>{' · '.join(meta)}</i>"
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    return few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many
 
 
 def render_article(a: dict, m: Meta) -> str:
     """The spec's mini-article post (Telegram HTML, ≤ 4096 chars): details are dropped from the end to fit."""
     details = list(a.get("details") or [])
     while True:
-        blocks = [f"{_meta_line(m)}\n<b>{_e(a['title'])}</b>", _e(a["lead"])]
-        if details:
-            blocks.append("\n".join(f"• {_e(d)}" for d in details))
-        tail = [f"<b>Почему важно.</b> {_e(a['why_it_matters'])}"]
+        more = [f"▸ {_e(d)}" for d in details]
+        extra = []
         if a.get("try"):
-            tail.append(f"<b>Попробовать.</b> {_e(a['try'])}")
+            extra.append(f"🧪 <b>Попробовать:</b> {_e(a['try'])}")
         if a.get("caveats"):
-            tail.append(f"<b>Оговорки.</b> {_e(a['caveats'])}")
-        blocks.append("\n".join(tail))
-        if links := _source_links(m.links):
-            blocks.append(links)
+            extra.append(f"⚠️ <b>Оговорки:</b> {_e(a['caveats'])}")
+        hidden = "\n".join(more) + ("\n\n" if more and extra else "") + "\n".join(extra)
+        blocks = [_head(a["title"], m), _e(a["lead"]), f"💡 {_e(a['why_it_matters'])}"]
+        if hidden:
+            blocks.append(f"<blockquote expandable>{hidden}</blockquote>")
         text = "\n\n".join(blocks)
+        if links := _source_links(m.links):
+            text += ("\n" if hidden else "\n\n") + links
         if len(text) <= MAX_MESSAGE_CHARS or not details:
             return text if len(text) <= MAX_MESSAGE_CHARS else text[:MAX_MESSAGE_CHARS]
         details.pop()
@@ -236,12 +257,11 @@ def render_article(a: dict, m: Meta) -> str:
 
 def render_card(title: str, summary: str | None, why: str | None, m: Meta) -> str:
     """Fallback when no mini-article could be written: the enrich fields."""
-    blocks = [f"{_meta_line(m)}\n<b>{_e(_one_line(title, 200))}</b>"]
-    body = [_e(summary)] if summary else []
+    blocks = [_head(_one_line(title, 200), m)]
+    if summary:
+        blocks.append(_e(summary))
     if why:
-        body.append(f"<b>Почему важно.</b> {_e(why)}")
-    if body:
-        blocks.append("\n".join(body))
+        blocks.append(f"💡 {_e(why)}")
     if links := _source_links(m.links):
         blocks.append(links)
     return "\n\n".join(blocks)
@@ -250,25 +270,28 @@ def render_card(title: str, summary: str | None, why: str | None, m: Meta) -> st
 def render_overview(day: date, ov: dict | None, titles: list[str], later: list[str]) -> str:
     """Opening post of the day; without an overview (the call failed) only the table of contents.
     later: what the next waves bring («4–6 — в 13:00», «🌱 ранние сигналы — в 19:00»)."""
-    toc = "\n".join(f"{i}. {_e(t)}" for i, t in enumerate(titles, 1))
-    text = f"<b>Главное за сутки · {day_label(day)}</b>\n"
+    blocks = [f"☕️ <b>Главное за {day.day} {MONTHS_GEN[day.month - 1]}</b>"]
     if ov:
-        text += f"{_e(ov['summary'])}\n\n<b>Куда движемся</b>\n{_e(ov['direction'])}\n\n"
-    text += f"<b>Сегодня</b>\n{toc}"
+        blocks.append(_e(ov["summary"]))
+        blocks.append(f"🧭 <b>Куда движемся:</b> {_e(ov['direction'])}")
+    toc = "\n".join(f"{KEYCAPS[i] if i < len(KEYCAPS) else f'{i + 1}.'} {_e(t)}" for i, t in enumerate(titles))
+    blocks.append(f"<b>В выпуске</b>\n{toc}")
     if later:
-        text += "\n" + " · ".join(_e(x) for x in later)
-    return text
+        blocks[-1] += "\n\n<i>⏰ " + " · ".join(_e(x) for x in later) + "</i>"
+    return "\n\n".join(blocks)
 
 
 def render_weekly(start: date, end: date, w: dict) -> str:
-    blocks = [f"<b>Неделя: куда движемся · {week_label(start, end)}</b>" + (f"\n{_e(w['intro'])}" if w["intro"] else "")]
-    for i, t in enumerate(w["trends"], 1):
-        lines = [f"<b>{i}. {_e(t['name'])}</b>", _e(t["evidence"])]
+    blocks = [f"🗓 <b>Неделя: куда движемся</b>\n<i>{week_label(start, end)}</i>"]
+    if w["intro"]:
+        blocks.append(_e(w["intro"]))
+    for i, t in enumerate(w["trends"]):
+        lines = [f"{KEYCAPS[i] if i < len(KEYCAPS) else f'{i + 1}.'} <b>{_e(t['name'])}</b>", _e(t["evidence"])]
         if t["direction"]:
-            lines.append(_e(t["direction"]))
+            lines.append(f"🧭 {_e(t['direction'])}")
         if t["try"]:
-            lines.append(f"<i>Попробовать:</i> {_e(t['try'])}")
+            lines.append(f"🧪 {_e(t['try'])}")
         blocks.append("\n".join(lines))
     if w["watch"]:
-        blocks.append(f"<b>Присмотреться:</b> {_e(w['watch'])}")
+        blocks.append(f"👀 <b>Присмотреться:</b> {_e(w['watch'])}")
     return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]

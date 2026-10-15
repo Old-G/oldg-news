@@ -3,6 +3,7 @@
     python -m jobs.daily --prepare       # prefilter → enrich → score → select → mini-articles → overview; sends nothing
     python -m jobs.daily --wave N        # prepare what is missing, then send what is due by wave N
     python -m jobs.daily --preview       # today's pick in the channel format to the owner's DM only; no digest is saved
+    python -m jobs.daily --preview --rewrite   # the same, articles written anew (after a prompt change)
 
 Preparing is idempotent: the pick is made once a day, articles and the overview are written only where missing.
 A wave sends every unsent entry whose wave has come, so a missed wave is caught up by the next one,
@@ -35,7 +36,7 @@ from db import queries
 from jobs.fetch import setup_logging
 
 log = logging.getLogger("daily")
-EARLY_HEADER = "🌱 Ранние сигналы — есть на HN/arXiv/HF, в каналах ещё нет"
+EARLY_HEADER = "🌱 <b>Ранние сигналы</b>\n<i>Уже на HN, arXiv и HF — в каналах ещё нет</i>"
 NO_PREVIEW = LinkPreviewOptions(is_disabled=True)  # the mini-article is the content; links are for checking
 
 
@@ -152,10 +153,11 @@ def append_late_manual(ctx: Ctx, digest_id: int) -> int:
 
 # --- step 9: mini-articles and the overview ----------------------------------------
 
-async def write_article(ctx: Ctx, story_id: int, refresh_stale: bool) -> bool:
-    """The story's mini-article, if missing (or older than its newest item, when refresh_stale). False on failure."""
+async def write_article(ctx: Ctx, story_id: int, refresh_stale: bool, rewrite: bool = False) -> bool:
+    """The story's mini-article, if missing (or older than its newest item, when refresh_stale; always, when
+    rewrite). False on failure."""
     card = queries.story_card(ctx.conn, story_id)
-    if card["article"] and not (refresh_stale and card["article_stale"]):
+    if card["article"] and not rewrite and not (refresh_stale and card["article_stale"]):
         return True
     main = next(iter(u for u in digest.story_links(card, is_specific_url) if is_specific_url(u)), None)
     primary = (main, await article.primary_text(ctx.http, main)) if main else None
@@ -174,8 +176,8 @@ async def write_article(ctx: Ctx, story_id: int, refresh_stale: bool) -> bool:
     return True
 
 
-async def write_articles(ctx: Ctx, story_ids: list[int], refresh_stale: bool) -> None:
-    failed = [sid for sid in story_ids if not await write_article(ctx, sid, refresh_stale)]
+async def write_articles(ctx: Ctx, story_ids: list[int], refresh_stale: bool, rewrite: bool = False) -> None:
+    failed = [sid for sid in story_ids if not await write_article(ctx, sid, refresh_stale, rewrite)]
     if failed:
         ctx.stats["article_failed"] = failed
 
@@ -234,7 +236,7 @@ def today_overview(conn, s: Settings, digest_id: int) -> str:
 
 def entry_text(conn, story_id: int, position: int) -> str:
     card = queries.story_card(conn, story_id)
-    meta = article.Meta(position, card["heat"], card["tags"], digest.story_links(card, is_specific_url))
+    meta = article.Meta(position, card["heat"], card["tags"], digest.story_links(card, is_specific_url), card["category"])
     if card["article"]:
         return article.render_article(card["article"], meta)
     return article.render_card(card["title"] or "", card["summary"], card["why_it_matters"], meta)
@@ -285,13 +287,13 @@ async def send_yesterday_line(conn, s: Settings, bot: Bot, day) -> None:
     await bot.send_message(s.owner_chat_id, line)
 
 
-async def preview(ctx: Ctx, bot: Bot) -> None:
+async def preview(ctx: Ctx, bot: Bot, rewrite: bool = False) -> None:
     """Today's pick in the channel format to the owner only. Enrich, score and articles are cached on the
     stories (the real run reuses them); no digest is created and nothing is marked digested."""
     s, day = ctx.s, today(ctx.s)
     top, early = pick(ctx, await rank(ctx))
     ids = [c.story_id for c in top + early]
-    await write_articles(ctx, ids, refresh_stale=True)
+    await write_articles(ctx, ids, refresh_stale=True, rewrite=rewrite)
     overview = await make_overview(ctx, day, [c.story_id for c in top])
     waves = s.digest_waves or Settings.model_fields["digest_waves"].default  # waves paused: show the usual times
     await bot.send_message(s.owner_chat_id, "Превью дайджеста — в канал не уходит.")
@@ -306,8 +308,8 @@ async def preview(ctx: Ctx, bot: Bot) -> None:
     ctx.stats.update(preview_top=len(top), preview_early=len(early))
 
 
-async def run(mode: str, wave: int | None = None) -> dict:
-    """mode: prepare | wave | preview."""
+async def run(mode: str, wave: int | None = None, rewrite: bool = False) -> dict:
+    """mode: prepare | wave | preview; rewrite (preview only) writes the articles anew, for prompt changes."""
     s = get_settings()
     conn = queries.connect(s.database_url)
     run_id = queries.start_run(conn, {"prepare": "daily"}.get(mode, mode))
@@ -319,7 +321,7 @@ async def run(mode: str, wave: int | None = None) -> dict:
         elif mode == "wave":
             await send_wave(ctx, bot, today(s), wave)
         else:
-            await preview(ctx, bot)
+            await preview(ctx, bot, rewrite)
     except Exception as e:
         conn.rollback()
         queries.finish_run(conn, run_id, _stats(ctx), error=repr(e))
@@ -345,9 +347,10 @@ if __name__ == "__main__":
     mode.add_argument("--prepare", action="store_true")
     mode.add_argument("--wave", type=int, choices=[1, 2, 3])
     mode.add_argument("--preview", action="store_true")
+    parser.add_argument("--rewrite", action="store_true", help="with --preview: write the articles anew")
     args = parser.parse_args()
     try:
-        asyncio.run(run("prepare" if args.prepare else "preview" if args.preview else "wave", args.wave))
+        asyncio.run(run("prepare" if args.prepare else "preview" if args.preview else "wave", args.wave, args.rewrite))
     except Exception:
         log.exception("daily failed")
         sys.exit(1)
