@@ -123,8 +123,9 @@ def parse_hf_papers(data: list[dict], source_key: str) -> list[RawItem]:
 
 async def fetch(client: httpx.AsyncClient, kind: str, url: str, source_key: str) -> list[RawItem]:
     r = await client.get(url)
-    if r.status_code == 429:  # Reddit throttles back-to-back requests: one polite retry
-        await asyncio.sleep(min(float(r.headers.get("retry-after") or 5), 10))
+    if r.status_code == 429:  # Reddit allows ~1 anonymous request per window: wait it out once
+        wait = r.headers.get("retry-after") or r.headers.get("x-ratelimit-reset") or 5
+        await asyncio.sleep(min(float(wait) + 1, 60))
         r = await client.get(url)
     r.raise_for_status()
     if kind == "hf_papers":
