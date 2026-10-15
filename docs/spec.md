@@ -4,16 +4,16 @@ Oct 10, 2026 · @Gleb
 
 ## Цель и границы v1
 
-Radar v1 — личный фильтр: из сотни источников в один утренний дайджест на 5–7 историй, с кнопками обратной связи и черновиками постов по звёздочке. Публикация в v1 — руками, система даёт отбор и текст.
+Radar v1 — личный фильтр: из сотни источников в один ежедневный дайджест на 5–7 историй — обзор дня и по мини-статье на историю, с кнопками обратной связи и черновиками постов по звёздочке. Публикация в канал своих постов в v1 — руками, система даёт отбор и текст.
 
-Один пайплайн — два выхода: история хранится структурно и на английском (что это, почему важно, ссылки, теги, heat), а тексты для RU-Telegram и EN-каналов генерируются из неё отдельными промптами, не переводом друг друга.
+Один пайплайн — несколько выходов: история хранится структурно и на английском (что это, почему важно, ссылки, теги, heat), а тексты для канала (RU-мини-статья, обзор дня, обзор недели) и черновики для RU-Telegram и EN-каналов генерируются отдельными промптами, не переводом друг друга. Мини-статья самодостаточна: читатель не открывает оригиналы, все факты, цифры и механизм — в тексте.
 
 Что делает v1:
 
 - Читает все Telegram-каналы, на которые ты подписан, плюс HF papers, HN и arXiv (cs.AI, cs.CL, cs.LG).
 - Склеивает дубли в истории и считает heat — число независимых источников.
 - Ранжирует по профилю вкуса, собранному из твоего канала-заметок, и по твоим 👍/👎/⭐.
-- Утром публикует дайджест в твой существующий Telegram-канал: 5–7 историй плюс секция «Ранние сигналы»; бот в личке — пульт управления и статистика.
+- Публикует дайджест в твой существующий Telegram-канал волнами в течение дня: утром обзор «Главное за сутки» + «Куда движемся», затем по мини-статье на русском на каждую из 5–7 историй, вечером «Ранние сигналы»; по воскресеньям — пост «Неделя: куда движемся». Бот в личке — пульт управления и статистика.
 - По ⭐ присылает два черновика: RU для Telegram и EN для X/LinkedIn.
 
 Не входит в v1: MCP-сервер, автопубликация, X как источник, GitHub trending, веб-интерфейс, мультипользовательский режим, платный тир.
@@ -36,7 +36,8 @@ Worker — единственный процесс, который пишет в
 - aiogram 3 — бот, inline-кнопки, long polling. Без вебхука и FastAPI в v1.
 - APScheduler внутри worker — расписание. Системный cron — если проще.
 - Postgres 18 с pgvector (образ pgvector/pgvector:pg18; на 19 — после GA и появления образа) как сервис docker-compose: том для данных, ежедневный pg\_dump в отдельный том; доступ через psycopg напрямую.
-- OpenAI: дешёвая модель для enrich/score (пакетно), сильная — для черновиков постов, модель эмбеддингов на 1536 измерений. Имена моделей задаёшь ты; живут в конфиге, не в коде. Если модель эмбеддингов даёт другую размерность — поменять vector(1536) в схеме.
+- trafilatura — основной текст статьи по ссылке для мини-статей (через тот же httpx-клиент с защитой от SSRF).
+- OpenAI: дешёвая модель для enrich/score (пакетно), сильная — для мини-статей, обзоров и черновиков постов, модель эмбеддингов на 1536 измерений. Имена моделей задаёшь ты; живут в конфиге, не в коде. Если модель эмбеддингов даёт другую размерность — поменять vector(1536) в схеме.
 - Docker Compose: сервисы postgres, worker и bot, общий .env.
 
 Структура репозитория:
@@ -52,12 +53,13 @@ radar/
     taste.py           # профиль вкуса: центроиды + текст
     enrich.py          # summary / why / tags (LLM, JSON)
     score.py           # prefilter + LLM-оценка + формула
-    digest.py          # отбор 5–7, рендер сообщений
+    digest.py          # отбор 5–7, волны, рендер сообщений
+    article.py         # материалы истории (полный текст ссылки) → мини-статья, обзор дня, обзор недели
     drafts.py          # RU/EN черновики по ⭐
   bot/                 # aiogram: дайджест, callback'и, /add, /missed
-  db/                  # schema.sql, queries.py
-  prompts/             # taste_profile.md, enrich.md, score.md, draft_ru.md, draft_en.md
-  jobs/                # fetch.py, daily.py, weekly_taste.py, bootstrap_taste.py
+  db/                  # schema.sql, migrations/, queries.py
+  prompts/             # taste_profile.md, enrich.md, score.md, article_ru.md, overview_ru.md, weekly_ru.md, draft_ru.md, draft_en.md
+  jobs/                # fetch.py, daily.py, weekly.py, weekly_taste.py, bootstrap_taste.py
   docker-compose.yml
 ```
 
@@ -79,7 +81,7 @@ radar/
 | HF papers | `https://huggingface.co/api/daily_papers` (JSON) | 20–40 | есть upvotes — идёт в raw, в v1 не влияет на score |
 | Hacker News | `hnrss.org/frontpage` или Firebase API `topstories` с фильтром score ≥ 100 | 30–60 | url = внешняя ссылка, не обсуждение; обсуждение кладём в `urls` |
 | arXiv | RSS `rss.arxiv.org/rss/cs.AI`, `cs.CL`, `cs.LG` | 300–600 | только abstract; в LLM попадает лишь после prefilter по эмбеддингам |
-| Ручной ввод | команда `/add <url>` в боте, форвард в канал-заметки | единицы | `/add` создаёт item с `source = manual` и сразу тянет историю в сегодняшний дайджест |
+| Ручной ввод | команда `/add <url>` в боте, форвард в канал-заметки | единицы | `/add` создаёт item с `source = manual` и сразу тянет историю в ближайшую волну сегодняшнего дайджеста |
 
 Правила для Telegram-адаптера:
 
@@ -141,7 +143,7 @@ X — отдельное решение. Официальный API платны
 
 ## Схема БД
 
-Девять таблиц: `sources` и `items` — сырьё, `stories` — склеенные истории (единица ранжирования и публикации), `digests` + `digest_entries` — что и как показано, `feedback` — твои реакции, `drafts` — черновики, `taste_profiles` + `taste_centroids` — версии вкуса, `runs` — лог запусков. Эмбеддинг хранится на item и усредняется в centroid истории; HNSW-индекс нужен только на `stories`.
+Одиннадцать таблиц: `sources` и `items` — сырьё, `stories` — склеенные истории (единица ранжирования и публикации; мини-статья хранится на истории), `digests` + `digest_entries` — что и как показано (обзор дня — на `digests`), `weekly_posts` — посты «Неделя: куда движемся», `feedback` — твои реакции, `drafts` — черновики, `taste_profiles` + `taste_centroids` — версии вкуса, `runs` — лог запусков. Изменения схемы на живой базе — файлами `db/migrations/NNN_*.sql` (идемпотентно: `add column if not exists`, `create table if not exists`); `schema.sql` всегда равен этому разделу. Эмбеддинг хранится на item и усредняется в centroid истории; HNSW-индекс нужен только на `stories`.
 
 ```sql
 create extension if not exists vector;
@@ -182,6 +184,9 @@ create table stories (
   status          text not null default 'new' check (status in ('new','digested','starred','dismissed')),
   enriched_at     timestamptz,
   scored_at       timestamptz,
+  article         jsonb,           -- мини-статья RU: {title, lead, details[], why_it_matters, try, caveats}
+  article_model   text,
+  article_at      timestamptz,
   created_at      timestamptz not null default now()
 );
 create index stories_centroid_hnsw on stories using hnsw (centroid vector_cosine_ops);
@@ -215,7 +220,8 @@ create index items_published on items (published_at desc);
 create table digests (
   id            bigserial primary key,
   for_date      date not null unique,
-  header_msg_id bigint,
+  overview      jsonb,                          -- обзор дня RU: {summary, direction}
+  header_msg_id bigint,                         -- пост-обзор в канале
   sent_at       timestamptz,
   created_at    timestamptz not null default now()
 );
@@ -227,6 +233,16 @@ create table digest_entries (
   section     text not null check (section in ('top','early')),
   tg_msg_id   bigint,                         -- сообщение с кнопками
   primary key (digest_id, story_id)
+);
+
+-- Еженедельный пост «Неделя: куда движемся»
+create table weekly_posts (
+  id          bigserial primary key,
+  week_start  date not null unique,           -- понедельник недели
+  body        jsonb not null,                 -- {intro, trends[], watch}
+  model       text,
+  tg_msg_id   bigint,
+  created_at  timestamptz not null default now()
 );
 
 -- Обратная связь
@@ -272,7 +288,7 @@ create table taste_centroids (
 -- Лог запусков
 create table runs (
   id          bigserial primary key,
-  job         text not null,                  -- fetch | daily | weekly_taste
+  job         text not null,                  -- fetch | daily | wave | weekly | weekly_taste
   started_at  timestamptz not null default now(),
   finished_at timestamptz,
   stats       jsonb,                          -- items_new, stories_new, enriched, scored, tokens, usd
@@ -308,7 +324,7 @@ limit 60;
 
 ## Пайплайн по шагам
 
-Два job'а: `fetch` каждые 2 часа (шаги 1–4), `daily` один раз утром (шаги 5–8). Шаги 9–10 — по событиям от бота. Каждый шаг идемпотентен: повторный запуск ничего не дублирует.
+Job'ы по расписанию: `fetch` каждые 2 часа (шаги 1–4), `daily` утром до первой волны — подготовка дайджеста (шаги 5–9), `wave` по времени волн — публикация (шаг 10), `weekly` по воскресеньям (шаг 13). Шаги 11–12 — по событиям от бота. Каждый шаг идемпотентен: повторный запуск ничего не дублирует.
 
 1. **Fetch.** Каждый включённый источник → адаптер → `RawItem`. Вставка в `items` с `on conflict do nothing`. Обновить `last_external_id` и `last_fetched_at`.
 2. **Normalize.** Канонический URL, чистка текста (ссылки из entities в текст, убрать эмодзи-мусор и подписи «подписывайся»), `lang` через fast-detect, `content_hash = sha256(url or text[:500])`. Реклама → `is_ad = true`, дальше не идёт.
@@ -322,24 +338,32 @@ limit 60;
    - иначе новая история: `title`, `canonical_url`, `first_seen_at`, `centroid = embedding`.
    - При присоединении: `centroid = mean(embeddings)`, `heat = count(distinct source_id)`, `last_seen_at = now()`. Items из канала-заметок дополнительно пишут `feedback(star, notes)`.
 5. **Prefilter.** Кандидаты = `status = 'new'`, видны за 36 часов. `prefilter_sim` = max cosine к позитивным центроидам активного профиля. В LLM идут: top-`PREFILTER_N` (старт 60) по `prefilter_sim`, плюс всё с `heat ≥ 3`, плюс всё из manual и канала-заметок. arXiv-одиночки ниже порога `PREFILTER_MIN_SIM` (старт 0.30) отсекаются здесь — это защищает от 500 абстрактов в день.
-6. **Enrich.** Для каждого кандидата без `enriched_at`: промпт `enrich` → JSON `{summary, why_it_matters, category, tags, title_clean}`. Вход — заголовок, текст лучшего item (самый длинный), список URL и число источников. Пакет по 10 историй в один запрос.
+6. **Enrich.** Для каждого кандидата без `enriched_at`: промпт `enrich` → JSON `{summary, why_it_matters, category, tags, title_clean, is_ad, confidence}`. Вход — заголовок, текст лучшего item (самый длинный, до `ENRICH_TEXT_CHARS` = 2000 символов), список URL, число источников и их виды. Пакет по 10 историй в один запрос. `is_ad = true` → `status = 'dismissed'`, дальше не идёт.
 7. **Score.** Промпт `score`: активный `profile_text` + пакет из 15 кандидатов → `{story_id, score 0–10, reason}`. Затем формула:
    - `heat_norm = min(heat, 8) / 8`
-   - `src_w` = средний `weight` источников истории, нормированный к 0–1
+   - `src_w` = средний `weight` источников истории, нормированный к 0–1: `(avg − 0.5) / 1.0`, с отсечкой в [0, 1]
    - `final = 0.6 * llm_score/10 + 0.25 * heat_norm + 0.15 * src_w`
    - штраф `-0.15`, если у истории уже есть `down`; `+0.1`, если `up`.
    - `is_early_signal = heat ≤ 2 and llm_score ≥ 7 and источник ∈ {hn, hf_papers, arxiv, github}` — новое, ещё не подхваченное каналами.
-8. **Digest.** Отбор: top по `final` с ограничением ≤ 2 на категорию, всего `DIGEST_N` (старт 6), плюс секция «Ранние сигналы» до 3 штук. Создать `digests` + `digest_entries`, опубликовать в канал тремя волнами (формат и состав волн — в разделе «Бот»), выбранным историям `status = 'digested'`. Отбор делается один раз, в первую волну; следующие волны публикуют уже выбранные `digest_entries` с пустым `tg_msg_id`, чья волна наступила, — повторный запуск волны ничего не дублирует. Не выбранные остаются `new` ещё сутки — могут набрать heat и попасть завтра; старше 48 часов → `dismissed`.
-9. **Feedback.** Callback от кнопки → `feedback(action, origin='bot')`. `down` → `status = 'dismissed'`. `star` → `status = 'starred'` и шаг 10.
-10. **Drafts.** По `star`: промпты `draft_ru` и `draft_en` сильной моделью → две записи в `drafts` → бот присылает оба текста отдельными сообщениями, готовыми к копированию.
+8. **Select.** Отбор: top по `final` с ограничением ≤ `MAX_PER_CATEGORY` (2) на категорию, всего `DIGEST_N` (старт 6), section `top`; ручные `/add` идут первыми и в лимит не входят. Плюс до `EARLY_N` (3) историй с `is_early_signal` из не попавших в top — section `early`. Создать `digests` + `digest_entries`, выбранным историям `status = 'digested'`. Отбор делается один раз в день; не выбранные остаются `new` ещё сутки — могут набрать heat и попасть завтра; старше 48 часов → `dismissed`.
+9. **Articles + overview.** Для каждой выбранной истории без `article`: собрать материалы → промпт `article_ru` сильной моделью → JSON `{title, lead, details[], why_it_matters, try, caveats}` в `stories.article` (+ `article_model`, `article_at`). Материалы истории, первым — основной источник:
+   - основная ссылка (`canonical_url`, если указывает на одну вещь): полный текст страницы через httpx-клиент с защитой от SSRF + trafilatura; GitHub-репозиторий → README (raw); x.com → `api.fxtwitter.com`; arXiv → abstract; t.me и страницы, которые не отдались, — пропускаются, статья пишется по items;
+   - тексты всех items истории (без рекламы и дублей по `content_hash`);
+   - всё вместе обрезается до `ARTICLE_SOURCE_CHARS` (20 000 символов).
+
+   Затем обзор дня: промпт `overview_ru` по мини-статьям секции `top` → `{summary, direction}` в `digests.overview`. Готовое не пересчитывается: повторный запуск генерирует только недостающее.
+10. **Waves.** Публикация в канал тремя волнами (формат и состав — в разделе «Бот»). Волна сначала догоняет подготовку (шаги 5–9, идемпотентно — если утренний `daily` упал или не успел), затем шлёт `digest_entries` с пустым `tg_msg_id`, чья волна наступила; `tg_msg_id` пишется сразу после отправки — повторный запуск волны ничего не дублирует. История, для которой мини-статья так и не получилась, публикуется короткой карточкой из полей enrich (`title_clean`, `summary`, `why_it_matters`).
+11. **Feedback.** Callback от кнопки → `feedback(action, origin='bot')`. `down` → `status = 'dismissed'`. `star` → `status = 'starred'` и шаг 12.
+12. **Drafts.** По `star`: промпты `draft_ru` и `draft_en` сильной моделью → две записи в `drafts` → бот присылает оба текста отдельными сообщениями, готовыми к копированию.
+13. **Weekly.** В воскресенье: истории всех дайджестов недели (пн–вс) с их мини-статьями (`title`, `lead`, `why_it_matters`) и твоими ⭐/👍 (origin bot) → промпт `weekly_ru` сильной моделью → `{intro, trends[], watch}` в `weekly_posts` → пост «Неделя: куда движемся» в канал. Неделя публикуется один раз (`week_start` unique, `tg_msg_id`).
 
 Еженедельно, `weekly_taste`: пересборка профиля вкуса (раздел «Профиль вкуса и обратная связь»).
 
-Расписание (время Минска): `fetch` в :00 каждые 2 часа; `daily` в 07:30 (отбор и первая волна), волны дайджеста в 07:30, 13:00 и 19:00 (`DIGEST_WAVES`); `weekly_taste` в воскресенье 09:00. Каждый запуск пишет строку в `runs` со статистикой и стоимостью.
+Расписание (время Минска): `fetch` в :00 каждые 2 часа; `daily` (подготовка) в 07:00 (`DIGEST_PREPARE_AT`); волны дайджеста в 07:30, 13:00 и 19:00 (`DIGEST_WAVES`); `weekly` в воскресенье 20:00, после вечерней волны (`WEEKLY_POST_AT`); `weekly_taste` в воскресенье 09:00. Каждый запуск пишет строку в `runs` со статистикой и стоимостью.
 
 ## Промпты
 
-Пять промптов, все на английском (так стабильнее у любой модели), лежат в `prompts/*.md` с `{placeholders}`. Общие правила: ответ только JSON там, где указано; парсер срезает \`\`\`-ограждения; при невалидном JSON — один повтор с добавкой «Return valid JSON only»; токены и стоимость каждого вызова пишутся в `runs.stats`. Мнение в черновиках всегда помечено как варианты — твоя позиция остаётся твоей.
+Восемь промптов, инструкции все на английском (так стабильнее у любой модели), даже когда ответ на русском; лежат в `prompts/*.md` с `{placeholders}`. Общие правила: ответ только JSON там, где указано; парсер срезает \`\`\`-ограждения; при невалидном JSON — один повтор с добавкой «Return valid JSON only»; токены и стоимость каждого вызова пишутся в `runs.stats`. Мнение в черновиках всегда помечено как варианты — твоя позиция остаётся твоей. Мини-статьи и обзоры — только факты из источников: чего в источниках нет, то названо «не указано», а не додумано.
 
 **1. `taste_profile.md` — профиль вкуса** (bootstrap из канала-заметок и еженедельное обновление; дешёвой моделью достаточно, сильная даёт профиль точнее)
 
@@ -411,7 +435,77 @@ USER
 [{"story_id": 123, "title_clean": "...", "summary": "...", "why_it_matters": "...", "category": "paper", "tags": ["agents", "memory"], "n_sources": 2, "first_seen_hours_ago": 9}, ...]
 ```
 
-**4. `draft_ru.md` — пост для Telegram** (сильная модель, по ⭐)
+**4. `article_ru.md` — мини-статья для канала** (сильная модель, по каждой истории дайджеста)
+
+```text
+SYSTEM
+You write one mini-article in Russian for a Telegram channel about AI engineering. The reader is a practicing AI engineer who builds agentic systems, MCP servers and support automation in production. He will NOT open the original sources: the article must stand on its own — every fact, number, name and mechanism he needs is in your text.
+
+Output strict JSON only, no prose, no code fences:
+{
+  "title": <Russian headline, ≤ 90 chars: the point, not the press-release name; no emoji, no clickbait>,
+  "lead": <1–2 sentences: what happened and who did it>,
+  "details": <array of 2–5 short strings: how it works, key numbers, versions, availability, price, license — only what the sources state>,
+  "why_it_matters": <1–2 sentences: what concretely changes for someone building agents>,
+  "try": <one sentence: what he could test or check first; null if nothing actionable>,
+  "caveats": <one sentence on limits, open questions or contradictions between sources; null if none>
+}
+
+Rules:
+- Facts only from SOURCES. Never invent numbers, names, benchmarks or capabilities. If something important is missing (price, availability, license), say it is not stated instead of guessing.
+- All fields together: 900–1700 characters. Plain text inside fields, no markdown.
+- Russian; technical terms stay in English the way engineers say them (agent, eval, fine-tuning, MCP, context window). Numbers and names exactly as in the sources.
+- Calm practitioner voice: no hype words, no exclamation marks.
+- Several sources describe one story: merge them into one account, do not list or compare the sources.
+
+USER
+Story: {n_sources} sources ({source_kinds}); category: {category}; tags: {tags}
+SOURCES:
+{sources}
+```
+
+**5. `overview_ru.md` — обзор дня «Главное за сутки» + «Куда движемся»** (сильная модель, раз в день)
+
+```text
+SYSTEM
+You write the opening post of a daily AI-engineering digest in Russian. The reader is an AI engineer who builds agentic systems; below are today's stories, already written up. Output strict JSON only: {"summary": "...", "direction": "..."}.
+
+summary: 2–4 sentences on what moved today. Group the stories into 1–3 themes and name the concrete things (products, numbers), never "много новостей".
+direction: 1–2 sentences, «куда движемся»: the trend today's stories point to and what it means for people building agents. Grounded in today's stories; if they share nothing, name the strongest single signal instead.
+
+Rules: Russian, technical terms in English; facts only from the stories; calm, no hype, no exclamation marks; plain text, no markdown.
+
+USER
+Date: {date}
+Stories:
+{stories}
+```
+
+**6. `weekly_ru.md` — пост «Неделя: куда движемся»** (сильная модель, по воскресеньям)
+
+```text
+SYSTEM
+You write a weekly post in Russian, «Неделя: куда движемся», for a Telegram channel about AI engineering. Input: the week's digest stories with their write-ups, marked when the channel author starred or upvoted them. Output strict JSON only:
+{
+  "intro": <1–2 sentences: the shape of the week>,
+  "trends": [
+    {"name": <trend, ≤ 60 chars>,
+     "evidence": <2–3 sentences naming the stories that show it>,
+     "direction": <1–2 sentences: where it is heading and what it means for agent builders>,
+     "try": <one sentence: what to test or watch next>}
+  ],
+  "watch": <one sentence: one weak signal worth watching next week; null if none>
+}
+
+Rules: 3–4 trends, each backed by at least two of the week's stories (one strong story only when nothing else connects); prefer trends behind starred and upvoted stories; facts only from the input; Russian with English technical terms; calm, no hype, no exclamation marks; plain text inside fields.
+
+USER
+Week: {week}
+Stories (★ starred, 👍 upvoted by the author):
+{stories}
+```
+
+**7. `draft_ru.md` — пост для Telegram** (сильная модель, по ⭐)
 
 ```text
 SYSTEM
@@ -433,7 +527,7 @@ Best source excerpt:
 {best_item_text}
 ```
 
-**5. `draft_en.md` — посты для X и LinkedIn** (сильная модель, по ⭐)
+**8. `draft_en.md` — посты для X и LinkedIn** (сильная модель, по ⭐)
 
 ```text
 SYSTEM
@@ -456,37 +550,74 @@ Best source excerpt:
 
 ## Бот
 
-Worker публикует дайджест в твой существующий Telegram-канал (DIGEST\_CHANNEL\_ID, бот — админ канала) тремя волнами в течение дня, чтобы читать порциями, а не всё разом: утром (07:30) — заголовок дня и истории 1–3, днём (13:00) — истории 4–`DIGEST_N`, вечером (19:00) — секция «Ранние сигналы». В каждой волне по одному посту на историю, у каждого свой ряд кнопок. Один пост на историю, а не общий список: кнопки привязаны к сообщению, превью ссылки показывается, реакция ставится в одно касание с телефона. Дайджест с первого дня — публичный контент, поэтому в постах нет ничего личного; статистика и команды живут в личке бота.
+Worker публикует дайджест в твой существующий Telegram-канал (DIGEST\_CHANNEL\_ID, бот — админ канала) тремя волнами в течение дня, чтобы читать порциями, а не всё разом: утром (07:30) — пост-обзор дня и мини-статьи 1–3, днём (13:00) — мини-статьи 4–`DIGEST_N`, вечером (19:00) — секция «Ранние сигналы». Одна мини-статья — один пост со своим рядом кнопок: кнопки привязаны к сообщению, реакция ставится в одно касание с телефона. Мини-статья самодостаточна — открывать оригиналы не нужно, ссылки внизу только для проверки, поэтому превью ссылки выключено. Дайджест с первого дня — публичный контент, поэтому в постах нет ничего личного; статистика и команды живут в личке бота. Все тексты — HTML-разметка Telegram, ≤ 4096 символов на сообщение; всё, что пришло от модели, экранируется.
 
-Заголовок дня в канале (строка «Вчера: 👍 3 · 👎 1 · ⭐ 1» уходит отдельно в личку бота, не в канал):
-
-```text
-Radar · 10 окт · 6 историй + 2 сигнала
-Вчера: 👍 3 · 👎 1 · ⭐ 1 · опубликовано 1
-```
-
-Сообщение истории (HTML-разметка Telegram, ≤ 600 символов):
+Пост-обзор дня, первым в утренней волне (строка «Вчера: 👍 3 · 👎 1 · ⭐ 1» уходит отдельно в личку бота, не в канал):
 
 ```text
-1 · 🔥 heat 7 · paper · agents, memory
-<b>{title_clean}</b>
-{summary}
-<i>Почему важно:</i> {why_it_matters}
-{primary_url}
-{secondary_url, если есть}
+<b>Главное за сутки · 16 окт</b>
+{overview.summary}
+
+<b>Куда движемся</b>
+{overview.direction}
+
+<b>Сегодня</b>
+1. {article.title}
+2. {article.title}
+…
+4–6 — в 13:00 · 🌱 ранние сигналы — в 19:00
 ```
 
-Кнопки под каждой историей: `👍` · `👎` · `⭐ пост`. После нажатия кнопки заменяются на отметку (`✓ 👍`), чтобы не нажимать дважды; `⭐` после `👍` разрешена, обратный ход — нет. В канале кнопки видят и подписчики: нажатия с твоего user id идут в профиль вкуса (origin bot), чужие пишутся как origin audience и в ранжирование не входят — это отдельный сигнал об аудитории; ⭐ срабатывает только для тебя.
+Оглавление собирается кодом из заголовков мини-статей секции `top`; последняя строка — только про то, что ещё будет (нет второй волны или ранних сигналов — нет и упоминания).
 
-Секция «Ранние сигналы» — тот же формат, заголовок секции отдельным сообщением: `🌱 Ранние сигналы — есть на HN/arXiv/HF, в каналах ещё нет`. Здесь ценны `👎` не меньше `👍`: они быстрее всего настраивают порог сигнала.
+Мини-статья (поля из `stories.article`; пустые `try` и `caveats` не выводятся):
+
+```text
+1 · 🔥 heat 7 · agents, memory
+<b>{title}</b>
+
+{lead}
+
+• {details[0]}
+• {details[1]}
+…
+
+<b>Почему важно.</b> {why_it_matters}
+<b>Попробовать.</b> {try}
+<b>Оговорки.</b> {caveats}
+
+Источники: <a href="{url}">{домен}</a> · <a href="{url}">{домен}</a>
+```
+
+В строке «Источники» — до 3 ссылок: основная, затем другие конкретные ссылки истории, затем пост в Telegram-канале, откуда история пришла. Если мини-статьи нет (шаг 10), пост — короткая карточка: та же первая строка, `<b>{title_clean}</b>`, `{summary}`, `<b>Почему важно.</b> {why_it_matters}`, источники.
+
+Кнопки под каждой мини-статьёй: `👍` · `👎` · `⭐ пост`. После нажатия кнопки заменяются на отметку (`✓ 👍`), чтобы не нажимать дважды; `⭐` после `👍` разрешена, обратный ход — нет. В канале кнопки видят и подписчики: нажатия с твоего user id идут в профиль вкуса (origin bot), чужие пишутся как origin audience и в ранжирование не входят — это отдельный сигнал об аудитории; ⭐ срабатывает только для тебя.
+
+Секция «Ранние сигналы» — те же мини-статьи, заголовок секции отдельным сообщением: `🌱 Ранние сигналы — есть на HN/arXiv/HF, в каналах ещё нет`. Здесь ценны `👎` не меньше `👍`: они быстрее всего настраивают порог сигнала.
+
+Пост «Неделя: куда движемся», воскресенье, без кнопок:
+
+```text
+<b>Неделя: куда движемся · 13–19 окт</b>
+{intro}
+
+<b>1. {trend.name}</b>
+{trend.evidence}
+{trend.direction}
+<i>Попробовать:</i> {trend.try}
+
+<b>2. …</b>
+
+<b>Присмотреться:</b> {watch}
+```
 
 По `⭐` бот отвечает тремя сообщениями: RU-черновик, EN X-черновик, EN LinkedIn-черновик — чистым текстом без разметки, чтобы копировалось как есть. Публикация руками в v1.
 
 Команды:
 
-- `/add <url>` — ручной item, история попадает в ближайший дайджест вне очереди.
+- `/add <url>` — ручной item, история попадает в ближайшую волну вне очереди (мини-статья пишется перед отправкой).
 - `/missed <url>` — «я увидел это не у Radar»: пишет `feedback(missed)`; если URL уже есть в базе — помечает, что история была, но не прошла отбор. Главная метрика качества, см. раздел «Метрики».
-- `/today` — повторно прислать сегодняшний дайджест.
+- `/today` — прислать в личку уже опубликованное сегодня: обзор и мини-статьи.
 - `/stats` — за 7 дней: историй всего, в дайджесте, 👍/👎/⭐, missed, стоимость LLM.
 - `/source <tg-ссылка> on|off` — включить или выключить источник без захода в БД.
 
@@ -515,18 +646,18 @@ Bootstrap (`jobs/bootstrap_taste.py`, один раз):
 
 ## Порядок сборки
 
-Восемь шагов, каждый заканчивается проверяемым результатом. Первый дайджест в боте появляется после шага 5 — ещё без enrich и score, но уже читаемый. С этого момента публикуешь каждый день, остальное дособираешь по ходу.
+Восемь шагов, каждый заканчивается проверяемым результатом. Первый дайджест в боте появляется после шага 5 — ещё без enrich и score, но уже читаемый. Публикация в канал начинается с шага 6, в формате мини-статей (решение 15.10.2026: короткие карточки шага 5 в канал не идут); остальное дособираешь по ходу.
 
 1. **Схема + Telegram-адаптер.** Готово, когда: `schema.sql` накатан, Telethon-сессия сохранена в `.env`, `jobs/fetch.py` за один прогон кладёт посты за 48 часов из всех каналов в `items`, повторный прогон ничего не дублирует.
 2. **RSS/JSON-адаптеры.** Готово, когда: HF papers, HN и три фида arXiv попадают в `items` с правильными `published_at` и каноническими URL; `/add <url>` создаёт item.
 3. **Normalize + embed + cluster.** Готово, когда: у каждого item есть `embedding`, у каждой истории — `centroid` и `heat`; выборочная проверка 30 историй — не больше 2 неверных склеек и не больше 3 несклеенных дублей. Иначе двигать `CLUSTER_SIM`.
 4. **Bootstrap вкуса.** Готово, когда: канал-заметки выгружен, центроиды посчитаны, текст профиля прочитан и поправлен, `taste_profiles.is_active = true`.
 5. **Бот: дайджест и кнопки.** Готово, когда: в канале волнами появляются заголовок + истории (пока отсортированные по `prefilter_sim` и `heat`), кнопки пишут в `feedback`, `/today` и `/stats` работают. Публикация руками начинается здесь.
-6. **Enrich + score + формула.** Готово, когда: `summary` и `why_it_matters` читаются как написанные человеком, `llm_reason` объясняет оценку, дайджест строится по `final_score` с лимитом на категорию, секция «Ранние сигналы» появляется.
+6. **Enrich + score + мини-статьи.** Готово, когда: `llm_reason` объясняет оценку; дайджест строится по `final_score` с лимитом на категорию, секция «Ранние сигналы» появляется; мини-статьи читаются как написанные человеком и самодостаточны — понятно, что произошло, как работает и почему важно, без открытия оригинала, и в них нет фактов, которых нет в источниках; обзор дня называет конкретику, а не «много новостей»; превью нового формата пришло в личку и ты сказал «ок» — только после этого волны публикуют в канал; воскресный пост «Неделя: куда движемся» сначала тоже превью в личку.
 7. **Черновики по ⭐.** Готово, когда: по звёздочке приходят три текста, RU-пост публикуется с правкой не дольше пары минут, EN-посты не читаются как перевод RU.
 8. **Weekly taste + `/missed`.** Готово, когда: воскресный прогон создаёт новую версию профиля и присылает диф, `/missed` пишет причину отсечения в `runs.stats`.
 
-До шага 6 стоимость LLM — только эмбеддинги; это ничего не блокирует. Шаги 6–8 можно перемежать с ежедневной публикацией: система работает на каждом промежуточном состоянии.
+До шага 6 стоимость LLM — только эмбеддинги; это ничего не блокирует. Шаги 7–8 можно перемежать с ежедневной публикацией: система работает на каждом промежуточном состоянии.
 
 ## Метрики, пороги и стоимость
 
@@ -554,11 +685,15 @@ Bootstrap (`jobs/bootstrap_taste.py`, один раз):
 | HEAT\_BYPASS | 3 | 2–5 | дайджест забит мейнстримом → выше |
 | CANDIDATE\_WINDOW\_H | 36 | 24–72 | вчерашнее всплывает дважды → меньше |
 | DIGEST\_N | 6 | 5–8 | не дочитываешь → меньше |
-| DIGEST\_WAVES | 07:30 / 13:00 / 19:00 | 1–4 волны | волна теряется в ленте → сдвинуть время; мало историй → меньше волн |
+| DIGEST\_WAVES | 07:30 / 13:00 / 19:00 | 1–4 волны | волна теряется в ленте → сдвинуть время; мало историй → меньше волн; `[]` — волны на паузе |
+| DIGEST\_PREPARE\_AT | 07:00 | за 20–60 мин до первой волны | подготовка не успевает к волне → раньше |
+| WEEKLY\_POST\_AT | вс 20:00 | вс, после вечерней волны | — |
+| ENRICH\_TEXT\_CHARS | 2000 | 1000–4000 | enrich путает истории без контекста → больше |
+| ARTICLE\_SOURCE\_CHARS | 20 000 | 8 000–40 000 | в мини-статье не хватает фактов → больше; дорого → меньше |
 | EARLY\_N | 3 | 2–5 | секция пустая → больше; шумная → меньше |
 | MAX\_PER\_CATEGORY | 2 | 1–3 | одни релизы → меньше |
 | W\_LLM / W\_HEAT / W\_SRC | 0.6 / 0.25 / 0.15 | сумма = 1 | популярное вытесняет релевантное → W\_HEAT вниз |
 
-Стоимость, оценка по порядку величины: эмбеддинги \~1000 items в день — центы; enrich + score по 60 историй дешёвой моделью — меньше доллара в день; черновики по ⭐ сильной моделью — несколько центов за историю. Итого ориентир $5–15 в месяц; реальную цифру покажет `runs.stats` после первой недели.
+Стоимость, оценка по порядку величины: эмбеддинги \~1000 items в день — центы; enrich + score по 60 историй дешёвой моделью — центы в день; мини-статьи сильной моделью — \~9 историй × (\~6k токенов на вход + \~1k на выход) ≈ $0.2 в день, обзор дня и недели — копейки; черновики по ⭐ — несколько центов за историю. Итого ориентир $5–15 в месяц; реальную цифру покажет `runs.stats` после первой недели.
 
 Правило тюнинга: менять один порог за раз и только по метрике, не по впечатлению от одного утра. Неделя наблюдения на новом значении, потом следующий.
