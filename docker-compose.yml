@@ -22,11 +22,12 @@ services:
       timeout: 5s
       retries: 5
 
-  # step 1: run on demand — `docker compose run --rm worker`; becomes the scheduler at step 5
+  # the scheduler (fetch every 2h, digest waves); one-off jobs: `docker compose run --rm -T worker python -m jobs.…`
   worker:
     build: .
     image: radar-worker
-    profiles: ["jobs"]
+    command: ["python", "-m", "jobs.worker"]
+    restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql://radar:${POSTGRES_PASSWORD}@postgres:5432/radar

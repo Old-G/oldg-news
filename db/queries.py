@@ -284,8 +284,13 @@ def attach_item(conn: psycopg.Connection, item_id: int, story_id: int) -> None:
     )
 
 
-def add_feedback(conn: psycopg.Connection, story_id: int, action: str, origin: str) -> None:
-    conn.execute("insert into feedback (story_id, action, origin) values (%s, %s, %s)", (story_id, action, origin))
+def add_feedback(
+    conn: psycopg.Connection, story_id: int, action: str, origin: str, digest_id: int | None = None
+) -> None:
+    conn.execute(
+        "insert into feedback (story_id, digest_id, action, origin) values (%s, %s, %s, %s)",
+        (story_id, digest_id, action, origin),
+    )
 
 
 # --- taste -------------------------------------------------------------------
@@ -351,3 +356,157 @@ def activate_taste_profile(conn: psycopg.Connection, version: int, text: str | N
     if text is not None:
         conn.execute("update taste_profiles set profile_text = %s where version = %s", (text, version))
     conn.execute("update taste_profiles set is_active = (version = %s)", (version,))
+
+
+# --- digest ------------------------------------------------------------------
+
+def active_profile_id(conn: psycopg.Connection) -> int | None:
+    row = conn.execute("select id from taste_profiles where is_active").fetchone()
+    return row[0] if row else None
+
+
+def digest_candidates(conn: psycopg.Connection, profile_id: int, window_h: int) -> list[tuple]:
+    """(story_id, prefilter_sim, heat, source kinds, has manual item) for new stories seen within the window.
+
+    prefilter_sim = max cosine to the active profile's positive centroids (spec: prefilter query).
+    """
+    return conn.execute(
+        """
+        select s.id,
+               (select max(1 - (s.centroid <=> c.centroid)) from taste_centroids c
+                 where c.profile_id = %s and c.polarity = 'pos') as sim,
+               s.heat,
+               array_agg(distinct src.kind),
+               bool_or(src.kind = 'manual')
+          from stories s join items i on i.story_id = s.id join sources src on src.id = i.source_id
+         where s.status = 'new' and s.last_seen_at > now() - make_interval(hours => %s)
+         group by s.id
+        """,
+        (profile_id, window_h),
+    ).fetchall()
+
+
+def set_prefilter_sims(conn: psycopg.Connection, rows: list[tuple[float, int]]) -> None:
+    with conn.cursor() as cur:
+        cur.executemany("update stories set prefilter_sim = %s where id = %s", rows)
+
+
+def dismiss_stale(conn: psycopg.Connection, hours: int) -> int:
+    return conn.execute(
+        "update stories set status = 'dismissed' where status = 'new' and last_seen_at < now() - make_interval(hours => %s)",
+        (hours,),
+    ).rowcount
+
+
+def digest_for(conn: psycopg.Connection, day) -> tuple[int, int | None] | None:
+    row = conn.execute("select id, header_msg_id from digests where for_date = %s", (day,)).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def create_digest(conn: psycopg.Connection, day, entries: list[tuple[int, int, str]]) -> int:
+    """entries: (story_id, position, section). Chosen stories become 'digested'."""
+    digest_id = conn.execute("insert into digests (for_date) values (%s) returning id", (day,)).fetchone()[0]
+    add_digest_entries(conn, digest_id, entries)
+    return digest_id
+
+
+def add_digest_entries(conn: psycopg.Connection, digest_id: int, entries: list[tuple[int, int, str]]) -> None:
+    with conn.cursor() as cur:
+        cur.executemany(
+            "insert into digest_entries (digest_id, story_id, position, section) values (%s, %s, %s, %s)"
+            " on conflict do nothing",
+            [(digest_id, sid, pos, sec) for sid, pos, sec in entries],
+        )
+        cur.executemany("update stories set status = 'digested' where id = %s and status = 'new'",
+                        [(sid,) for sid, _, _ in entries])
+
+
+def digest_entries(conn: psycopg.Connection, digest_id: int) -> list[tuple]:
+    """(story_id, position, section, tg_msg_id) in order."""
+    return conn.execute(
+        "select story_id, position, section, tg_msg_id from digest_entries where digest_id = %s"
+        " order by section desc, position",  # 'top' before 'early'
+        (digest_id,),
+    ).fetchall()
+
+
+def set_entry_message(conn: psycopg.Connection, digest_id: int, story_id: int, msg_id: int) -> None:
+    conn.execute("update digest_entries set tg_msg_id = %s where digest_id = %s and story_id = %s",
+                 (msg_id, digest_id, story_id))
+
+
+def set_header_message(conn: psycopg.Connection, digest_id: int, msg_id: int) -> None:
+    conn.execute("update digests set header_msg_id = %s, sent_at = now() where id = %s", (msg_id, digest_id))
+
+
+def story_card(conn: psycopg.Connection, story_id: int) -> dict:
+    """What a digest post needs: story fields plus the items' links and the longest text."""
+    st = conn.execute(
+        "select title, heat, canonical_url, summary, why_it_matters, category, tags from stories where id = %s",
+        (story_id,),
+    ).fetchone()
+    items = conn.execute(
+        """
+        select i.title, i.text, i.url, i.urls, i.raw->>'link', src.kind
+          from items i join sources src on src.id = i.source_id
+         where i.story_id = %s order by length(coalesce(i.text, '')) desc
+        """,
+        (story_id,),
+    ).fetchall()
+    return {
+        "title": st[0], "heat": st[1], "canonical_url": st[2], "summary": st[3], "why_it_matters": st[4],
+        "category": st[5], "tags": st[6] or [],
+        "items": [dict(zip(("title", "text", "url", "urls", "tg_link", "kind"), r)) for r in items],
+    }
+
+
+# --- feedback ----------------------------------------------------------------
+
+def owner_actions(conn: psycopg.Connection, story_id: int) -> set[str]:
+    rows = conn.execute(
+        "select distinct action from feedback where story_id = %s and origin = 'bot'", (story_id,)
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def latest_digest_of(conn: psycopg.Connection, story_id: int) -> int | None:
+    row = conn.execute(
+        "select d.id from digest_entries e join digests d on d.id = e.digest_id where e.story_id = %s"
+        " order by d.for_date desc limit 1",
+        (story_id,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def set_story_status(conn: psycopg.Connection, story_id: int, status: str) -> None:
+    conn.execute("update stories set status = %s where id = %s", (status, story_id))
+
+
+def feedback_counts(conn: psycopg.Connection, since, until) -> dict[str, int]:
+    rows = conn.execute(
+        "select action, count(*) from feedback where origin = 'bot' and created_at >= %s and created_at < %s"
+        " group by action",
+        (since, until),
+    ).fetchall()
+    return dict(rows)
+
+
+def week_stats(conn: psycopg.Connection) -> dict:
+    """/stats: the last 7 days."""
+    row = conn.execute(
+        """
+        select
+          (select count(*) from stories s where s.created_at > now() - interval '7 days'
+              and not exists (select 1 from feedback f where f.story_id = s.id and f.origin = 'notes')),
+          (select count(*) from digest_entries e join digests d on d.id = e.digest_id
+            where d.for_date > current_date - 7),
+          (select count(*) filter (where action = 'up') from feedback where origin = 'bot' and created_at > now() - interval '7 days'),
+          (select count(*) filter (where action = 'down') from feedback where origin = 'bot' and created_at > now() - interval '7 days'),
+          (select count(*) filter (where action = 'star') from feedback where origin = 'bot' and created_at > now() - interval '7 days'),
+          (select count(*) from feedback where action = 'missed' and created_at > now() - interval '7 days'),
+          (select count(*) from feedback where origin = 'audience' and created_at > now() - interval '7 days'),
+          (select coalesce(sum((stats->>'usd')::numeric), 0) from runs where started_at > now() - interval '7 days')
+        """
+    ).fetchone()
+    keys = ("stories", "in_digest", "up", "down", "star", "missed", "audience", "usd")
+    return dict(zip(keys, row))

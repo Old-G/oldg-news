@@ -72,7 +72,13 @@ class Settings(BaseSettings):
     heat_bypass: int = 3
     candidate_window_h: int = 36
     digest_n: int = 6
-    digest_waves: list[str] = ["07:30", "13:00", "19:00"]  # Minsk time; wave 1 = header + top 3
+    digest_waves: list[str] = ["07:30", "13:00", "19:00"]  # wave 1 = header + top stories, 2 = the rest, 3 = early signals
+    digest_tz: str = "Europe/Minsk"
+    wave1_n: int = 3
+    # until step 6 (no llm_score) stories rank by taste similarity plus this much per extra source
+    interim_heat_bonus: float = 0.05
+    stale_after_h: int = 48  # unselected stories older than this → dismissed
+    fetch_every_h: int = 2
     early_n: int = 3
     max_per_category: int = 2
     w_llm: float = 0.6

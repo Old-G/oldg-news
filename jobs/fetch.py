@@ -128,11 +128,18 @@ def normalize_pending(conn, batch: int = 500) -> dict:
     return stats
 
 
-async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+FETCH_LOCK = 734_001  # pg advisory lock: one fetch at a time, one Telegram session in use
+
+
+async def run() -> list[str]:
+    """One fetch run; returns the errors (empty = clean). Skips if another fetch is running."""
     s = get_settings()
     conn = queries.connect(s.database_url)
+    if not conn.execute("select pg_try_advisory_lock(%s)", (FETCH_LOCK,)).fetchone()[0]:
+        log.warning("another fetch is running, skipping")
+        conn.close()
+        return []
+    conn.commit()
     run_id = queries.start_run(conn, "fetch")
     stats = {
         "telegram": {"channels": 0, "messages_seen": 0, "items_seen": 0, "items_new": 0, "skipped_no_text": 0},
@@ -169,8 +176,18 @@ async def main() -> None:
     stats["usd"] = stats.get("embed", {}).get("usd", 0.0)
     queries.finish_run(conn, run_id, stats, error="; ".join(errors) or None)
     log.info("run %s done: %s", run_id, stats)
-    conn.close()
-    if errors:
+    conn.close()  # releases the lock
+    return errors
+
+
+def setup_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+async def main() -> None:
+    setup_logging()
+    if await run():
         sys.exit(1)
 
 
