@@ -53,6 +53,7 @@ async def run_weekly() -> None:
 
 async def main() -> None:
     fetch.setup_logging()
+    logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)  # drafts poll every minute
     s = get_settings()
     scheduler = AsyncIOScheduler(timezone=s.digest_tz)
     common = {"max_instances": 1, "coalesce": True, "misfire_grace_time": 1800}
