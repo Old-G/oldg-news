@@ -8,6 +8,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import httpx
 
 DROP_PARAMS = {"ref", "si", "fbclid"}
+# Medium tags every link with where it was seen: ?source=rss…, email-…digest.reader…, home_for_you---…, post_page---…
+_MEDIUM_SOURCE = re.compile(r"^(rss|email-)|---")
 SHORT_HOSTS = {
     "t.co", "bit.ly", "tinyurl.com", "goo.gl", "ow.ly", "buff.ly", "lnkd.in", "is.gd",
     "t.ly", "rebrand.ly", "dlvr.it", "link.medium.com", "readhacker.news",
@@ -35,7 +37,7 @@ def canonical_url(url: str) -> str:
     query = [
         (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
         if not k.lower().startswith("utm_") and k.lower() not in DROP_PARAMS
-        and not (k.lower() == "source" and v.startswith("rss"))  # Medium feeds tag every link with ?source=rss…
+        and not (k.lower() == "source" and _MEDIUM_SOURCE.search(v))
     ]
 
     if host in ("twitter.com", "x.com"):
