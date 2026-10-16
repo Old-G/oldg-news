@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     weekly_post_at: str = "sun 20:00"  # «Неделя: куда движемся», after the evening wave; "off" = not scheduled
     # stories the LLM could not score (a failed batch) rank by taste similarity plus this much per extra source
     interim_heat_bonus: float = 0.05
+    tg_send_retries: int = 3  # a post that hits a Telegram network error is sent again this many times
+    tg_send_retry_s: float = 30.0  # pause before repeat k is k × this
     enrich_batch: int = 10
     score_batch: int = 15
     enrich_text_chars: int = 2000

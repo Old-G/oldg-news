@@ -17,7 +17,7 @@ from config import get_settings
 from core import article
 from core.llm import Usage, complete_json, load_prompt, make_client, render
 from db import queries
-from jobs.daily import NO_PREVIEW, make_bot, today
+from jobs.daily import NO_PREVIEW, make_bot, retrying, today
 from jobs.fetch import setup_logging
 
 log = logging.getLogger("weekly")
@@ -58,7 +58,8 @@ async def run(preview_only: bool = False) -> dict:
                     await bot.send_message(s.owner_chat_id, text, link_preview_options=NO_PREVIEW)
                     stats["preview"] = True
                 else:
-                    msg = await bot.send_message(s.digest_channel_id, text, link_preview_options=NO_PREVIEW)
+                    msg = await retrying(s, lambda: bot.send_message(s.digest_channel_id, text,
+                                                                     link_preview_options=NO_PREVIEW))
                     queries.set_weekly_message(conn, start, msg.message_id)
                     conn.commit()
                     stats["published"] = msg.message_id

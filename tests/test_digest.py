@@ -2,7 +2,7 @@ import pytest
 
 from bot.keyboards import feedback_keyboard, parse
 from core.digest import (
-    Candidate, buttons, later_lines, owner_may, select, story_links, wave_of,
+    Candidate, all_batches_failed, buttons, later_lines, owner_may, select, story_links, wave_of,
 )
 from core.normalize import is_specific_url
 
@@ -80,3 +80,12 @@ def test_callback_data_roundtrip():
     assert [b.callback_data for b in kb.inline_keyboard[0]] == ["fb:up:42", "fb:down:42", "fb:star:42"]
     assert parse("fb:star:42") == ("star", 42)
     assert parse("garbage") is None
+
+
+@pytest.mark.parametrize("n_inputs, failed, held", [
+    (25, 3, True),   # 3 batches of 10, all failed: no network to the LLM, the pick waits
+    (25, 2, False),  # one batch got through: pick with what there is
+    (0, 0, False),   # nothing to do is not a failure
+])
+def test_all_batches_failed(n_inputs, failed, held):
+    assert all_batches_failed(n_inputs, 10, failed) is held

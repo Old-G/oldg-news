@@ -28,6 +28,7 @@ from openai import AsyncOpenAI
 
 from adapters.rss import make_http_client
 from bot.keyboards import feedback_keyboard
+from bot.send import with_retry
 from config import Settings, get_settings
 from core import article, digest, enrich, score
 from core.llm import Usage, complete_json, load_prompt, make_client, render
@@ -88,6 +89,8 @@ async def rank(ctx: Ctx) -> list[digest.Candidate]:
             for sid, title, canon, heat, text, urls, kinds in queries.enrich_inputs(conn, need)
         ]
         records, failed = await enrich.run(ctx.llm, s, ctx.usage, inputs, s.enrich_batch)
+        if digest.all_batches_failed(len(inputs), s.enrich_batch, failed):
+            raise RuntimeError(f"enrich: all {failed} batches failed, the pick is put off to the next run")
         queries.set_enriched(conn, records)
         conn.commit()
         by_id = {r.story_id: r for r in records}
@@ -101,6 +104,8 @@ async def rank(ctx: Ctx) -> list[digest.Candidate]:
     if need:
         scores, failed = await score.run(ctx.llm, s, ctx.usage, profile_text, queries.score_inputs(conn, need),
                                          s.score_batch)
+        if digest.all_batches_failed(len(need), s.score_batch, failed):
+            raise RuntimeError(f"score: all {failed} batches failed, the pick is put off to the next run")
         queries.set_scores(conn, scores)
         conn.commit()
         for c in pre:
@@ -251,6 +256,11 @@ async def send_entry(bot: Bot, conn, chat_id: int, story_id: int, position: int)
     return msg.message_id
 
 
+def retrying(s: Settings, call):
+    """A channel post that rides out a short network outage; a long one fails the wave, and the next catches up."""
+    return with_retry(call, s.tg_send_retries, s.tg_send_retry_s)
+
+
 async def send_wave(ctx: Ctx, bot: Bot, day, wave: int) -> None:
     conn, s = ctx.conn, ctx.s
     digest_id = await prepare(ctx, day)
@@ -262,7 +272,8 @@ async def send_wave(ctx: Ctx, bot: Bot, day, wave: int) -> None:
         return
 
     if header_msg is None:
-        msg = await bot.send_message(s.digest_channel_id, today_overview(conn, s, digest_id), link_preview_options=NO_PREVIEW)
+        text = today_overview(conn, s, digest_id)
+        msg = await retrying(s, lambda: bot.send_message(s.digest_channel_id, text, link_preview_options=NO_PREVIEW))
         queries.set_header_message(conn, digest_id, msg.message_id)
         conn.commit()
         await send_yesterday_line(conn, s, bot, day)
@@ -270,9 +281,9 @@ async def send_wave(ctx: Ctx, bot: Bot, day, wave: int) -> None:
     early_started = any(e[2] == "early" and e[3] is not None for e in entries)
     for story_id, position, section, _ in due:
         if section == "early" and not early_started:
-            await bot.send_message(s.digest_channel_id, EARLY_HEADER)
+            await retrying(s, lambda: bot.send_message(s.digest_channel_id, EARLY_HEADER))
             early_started = True
-        msg_id = await send_entry(bot, conn, s.digest_channel_id, story_id, position)
+        msg_id = await retrying(s, lambda: send_entry(bot, conn, s.digest_channel_id, story_id, position))
         queries.set_entry_message(conn, digest_id, story_id, msg_id)
         conn.commit()  # stored at once: a crash mid-wave never sends a post twice
         ctx.stats["sent"] += 1
@@ -284,7 +295,7 @@ async def send_yesterday_line(conn, s: Settings, bot: Bot, day) -> None:
     start = datetime.combine(day - timedelta(days=1), datetime.min.time(), tz)
     counts = queries.feedback_counts(conn, start, start + timedelta(days=1))
     line = f"Вчера: 👍 {counts.get('up', 0)} · 👎 {counts.get('down', 0)} · ⭐ {counts.get('star', 0)}"
-    await bot.send_message(s.owner_chat_id, line)
+    await retrying(s, lambda: bot.send_message(s.owner_chat_id, line))
 
 
 async def preview(ctx: Ctx, bot: Bot, rewrite: bool = False) -> None:

@@ -30,6 +30,12 @@ def interim_score(c: Candidate, heat_bonus: float) -> float:
     return c.prefilter_sim + heat_bonus * (min(c.heat, 8) - 1)
 
 
+def all_batches_failed(n_inputs: int, batch: int, failed: int) -> bool:
+    """A stage that had work and lost every batch (usually no network to the LLM): a pick made now would rest
+    on yesterday's scores, so the digest is not built and the next wave tries again."""
+    return n_inputs > 0 and failed >= -(-n_inputs // batch)
+
+
 def select(cands: list[Candidate], n: int, max_per_category: int, early_n: int,
            heat_bonus: float) -> tuple[list[Candidate], list[Candidate]]:
     """Spec step 8: (top, early). Manual /add stories go first and do not count against n; the rest by
