@@ -51,10 +51,10 @@ services:
     mem_limit: 384m  # ~215 MB in use: aiogram + the shared pipeline imports
 
   # daily pg_dump into its own volume, the newest BACKUP_KEEP kept; by hand:
-  # `docker compose exec backup sh /backup.sh now` (a dump) or `… check` (restore into a scratch db and compare)
+  # `docker compose exec backup sh /db/backup.sh now` (a dump) or `… check` (restore into a scratch db and compare)
   backup:
     image: pgvector/pgvector:pg18
-    entrypoint: ["sh", "/backup.sh", "loop"]
+    entrypoint: ["sh", "/db/backup.sh", "loop"]
     restart: unless-stopped
     environment:
       PGHOST: postgres
@@ -66,7 +66,7 @@ services:
       BACKUP_KEEP: ${BACKUP_KEEP:-7}
     volumes:
       - backups:/backups
-      - ./db/backup.sh:/backup.sh:ro
+      - ./db:/db:ro  # the folder, not the file: a file mount keeps the old copy after git pull
     depends_on:
       postgres:
         condition: service_healthy
