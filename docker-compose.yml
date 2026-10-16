@@ -52,7 +52,9 @@ services:
 
   # daily pg_dump into its own volume, the newest BACKUP_KEEP kept; by hand:
   # `docker compose exec backup sh /db/backup.sh now` (a dump) or `… check` (restore into a scratch db and compare)
+  # off since 17.10.2026 (owner's call): starts only with `docker compose --profile backup up -d backup`
   backup:
+    profiles: ["backup"]
     image: pgvector/pgvector:pg18
     entrypoint: ["sh", "/db/backup.sh", "loop"]
     restart: unless-stopped

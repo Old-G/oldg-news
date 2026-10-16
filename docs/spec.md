@@ -35,7 +35,7 @@ Worker — единственный процесс, который пишет в
 - feedparser + httpx — RSS и HTTP.
 - aiogram 3 — бот, inline-кнопки, long polling. Без вебхука и FastAPI в v1.
 - APScheduler внутри worker — расписание. Системный cron — если проще.
-- Postgres 18 с pgvector (образ pgvector/pgvector:pg18; на 19 — после GA и появления образа) как сервис docker-compose: том для данных, ежедневный pg\_dump в отдельный том; доступ через psycopg напрямую.
+- Postgres 18 с pgvector (образ pgvector/pgvector:pg18; на 19 — после GA и появления образа) как сервис docker-compose: том для данных, ежедневный pg\_dump в отдельный том (сервис `backup`; с 17.10.2026 выключен решением владельца, включается `docker compose --profile backup up -d backup`); доступ через psycopg напрямую.
 - trafilatura — основной текст статьи по ссылке для мини-статей (через тот же httpx-клиент с защитой от SSRF).
 - OpenAI: дешёвая модель для enrich/score (пакетно), сильная — для мини-статей, обзоров и черновиков постов, модель эмбеддингов на 1536 измерений. Имена моделей задаёшь ты; живут в конфиге, не в коде. Если модель эмбеддингов даёт другую размерность — поменять vector(1536) в схеме.
 - Docker Compose: сервисы postgres, worker и bot, общий .env.
