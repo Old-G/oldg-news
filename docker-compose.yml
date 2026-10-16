@@ -50,5 +50,28 @@ services:
         condition: service_healthy
     mem_limit: 384m  # ~215 MB in use: aiogram + the shared pipeline imports
 
+  # daily pg_dump into its own volume, the newest BACKUP_KEEP kept; by hand:
+  # `docker compose exec backup sh /backup.sh now` (a dump) or `… check` (restore into a scratch db and compare)
+  backup:
+    image: pgvector/pgvector:pg18
+    entrypoint: ["sh", "/backup.sh", "loop"]
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: radar
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: radar
+      TZ: Europe/Minsk
+      BACKUP_AT: ${BACKUP_AT:-04:30}  # before the 07:00 preparation, between two fetches
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+    volumes:
+      - backups:/backups
+      - ./db/backup.sh:/backup.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 128m
+
 volumes:
   pgdata:
+  backups:
