@@ -1,7 +1,7 @@
 """daily job: prepare today's digest and publish it to the channel in waves.
 
     python -m jobs.daily --prepare       # prefilter → enrich → score → select → mini-articles → overview; sends nothing
-    python -m jobs.daily --wave N        # prepare what is missing, then send what is due by wave N
+    python -m jobs.daily --wave N        # prepare what is missing, then send what is due by wave N (as a last try)
     python -m jobs.daily --preview       # today's pick in the channel format to the owner's DM only; no digest is saved
     python -m jobs.daily --preview --rewrite   # the same, articles written anew (after a prompt change)
 
@@ -78,7 +78,7 @@ async def rank(ctx: Ctx) -> list[digest.Candidate]:
     ]
     queries.set_prefilter_sims(conn, [(c.prefilter_sim, c.story_id) for c in cands])
     conn.commit()
-    pre = score.prefilter(cands, s.prefilter_n, s.prefilter_min_sim, s.heat_bypass)
+    pre = score.prefilter(cands, s.prefilter_n, s.prefilter_min_sim, s.heat_bypass, s.early_prefilter_n)
     ctx.stats.update(candidates=len(cands), prefiltered=len(pre))
 
     need = [c.story_id for c in pre if not c.enriched]
@@ -261,7 +261,9 @@ def retrying(s: Settings, call):
     return with_retry(call, s.tg_send_retries, s.tg_send_retry_s)
 
 
-async def send_wave(ctx: Ctx, bot: Bot, day, wave: int) -> None:
+async def send_wave(ctx: Ctx, bot: Bot, day, wave: int, last_try: bool = True) -> None:
+    """Sends what is due by this wave. Unless last_try, a wave whose overview or due articles failed to be
+    written sends nothing and fails, so the worker tries again later; the last try sends what there is."""
     conn, s = ctx.conn, ctx.s
     digest_id = await prepare(ctx, day)
     _, header_msg = queries.digest_for(conn, day)
@@ -270,6 +272,11 @@ async def send_wave(ctx: Ctx, bot: Bot, day, wave: int) -> None:
     ctx.stats.update(wave=wave, sent=0)
     if not due:
         return
+    unfinished = [sid for sid, *_ in due if sid in ctx.stats.get("article_failed", [])]
+    if header_msg is None and ctx.stats.get("overview_failed"):
+        unfinished.append("overview")
+    if unfinished and not last_try:
+        raise RuntimeError(f"not written yet: {unfinished}; the wave is tried again later")
 
     if header_msg is None:
         text = today_overview(conn, s, digest_id)
@@ -319,8 +326,9 @@ async def preview(ctx: Ctx, bot: Bot, rewrite: bool = False) -> None:
     ctx.stats.update(preview_top=len(top), preview_early=len(early))
 
 
-async def run(mode: str, wave: int | None = None, rewrite: bool = False) -> dict:
-    """mode: prepare | wave | preview; rewrite (preview only) writes the articles anew, for prompt changes."""
+async def run(mode: str, wave: int | None = None, rewrite: bool = False, last_try: bool = True) -> dict:
+    """mode: prepare | wave | preview; rewrite (preview only) writes the articles anew, for prompt changes;
+    last_try (wave only): False lets the wave fail instead of sending unfinished posts."""
     s = get_settings()
     conn = queries.connect(s.database_url)
     run_id = queries.start_run(conn, {"prepare": "daily"}.get(mode, mode))
@@ -330,7 +338,7 @@ async def run(mode: str, wave: int | None = None, rewrite: bool = False) -> dict
         if mode == "prepare":
             await prepare(ctx, today(s))
         elif mode == "wave":
-            await send_wave(ctx, bot, today(s), wave)
+            await send_wave(ctx, bot, today(s), wave, last_try)
         else:
             await preview(ctx, bot, rewrite)
     except Exception as e:

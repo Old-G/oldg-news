@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     url_match_min_sim: float = 0.5
     story_match_days: int = 7
     prefilter_n: int = 60
+    early_prefilter_n: int = 30  # on top of prefilter_n: the best by similarity that may become early signals
     prefilter_min_sim: float = 0.30
     heat_bypass: int = 3
     candidate_window_h: int = 36
@@ -90,6 +91,8 @@ class Settings(BaseSettings):
     weekly_post_at: str = "sun 20:00"  # «Неделя: куда движемся», after the evening wave; "off" = not scheduled
     # stories the LLM could not score (a failed batch) rank by taste similarity plus this much per extra source
     interim_heat_bonus: float = 0.05
+    wave_retries: int = 8  # a wave that failed or found its posts unfinished runs again this many times…
+    wave_retry_min: int = 15  # …this many minutes apart; the last try sends what there is
     tg_send_retries: int = 3  # a post that hits a Telegram network error is sent again this many times
     tg_send_retry_s: float = 30.0  # pause before repeat k is k × this
     enrich_batch: int = 10

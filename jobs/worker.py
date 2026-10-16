@@ -6,15 +6,18 @@ the weekly post at WEEKLY_POST_AT, the taste profile at WEEKLY_TASTE_AT, ⭐ dra
 
 import asyncio
 import logging
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from config import get_settings
 from jobs import daily, drafts, fetch, weekly, weekly_taste
 
 log = logging.getLogger("worker")
+scheduler: AsyncIOScheduler | None = None
 
 
 async def run_fetch() -> None:
@@ -30,11 +33,20 @@ async def run_prepare() -> None:
         log.exception("prepare failed")  # recorded in runs; every wave prepares what is missing
 
 
-async def run_wave(wave: int) -> None:
+async def run_wave(wave: int, attempt: int = 1) -> None:
+    """A failed or unfinished wave (no network, no overview yet) runs again in WAVE_RETRY_MIN, up to WAVE_RETRIES
+    times; the last try sends what there is. Waves are idempotent: a repeat never posts twice."""
+    s = get_settings()
     try:
-        await daily.run("wave", wave)
+        await daily.run("wave", wave, last_try=attempt > s.wave_retries)
     except Exception:
-        log.exception("wave %s failed", wave)  # recorded in runs; the next wave catches up
+        log.exception("wave %s, try %s failed", wave, attempt)  # recorded in runs
+        if attempt > s.wave_retries:
+            return  # the next wave catches up
+        when = datetime.now(scheduler.timezone) + timedelta(minutes=s.wave_retry_min)
+        scheduler.add_job(run_wave, DateTrigger(when), args=[wave, attempt + 1], id=f"wave{wave}-retry",
+                          replace_existing=True, misfire_grace_time=1800)
+        log.info("wave %s: try %s at %s", wave, attempt + 1, when)
 
 
 async def run_drafts() -> None:
@@ -61,6 +73,7 @@ async def run_weekly() -> None:
 async def main() -> None:
     fetch.setup_logging()
     logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)  # drafts poll every minute
+    global scheduler
     s = get_settings()
     scheduler = AsyncIOScheduler(timezone=s.digest_tz)
     common = {"max_instances": 1, "coalesce": True, "misfire_grace_time": 1800}

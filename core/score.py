@@ -16,11 +16,14 @@ EARLY_KINDS = {"hn", "hf_papers", "arxiv", "github", "github_search", "hf_trendi
 HEAT_CAP = 8
 
 
-def prefilter(cands: list, n: int, min_sim: float, heat_bypass: int) -> list:
-    """Spec step 5: top n by prefilter_sim, plus every story with heat ≥ heat_bypass, plus manual and notes.
-    A paper nobody else picked up and below min_sim is cut first."""
+def prefilter(cands: list, n: int, min_sim: float, heat_bypass: int, early_n: int = 0) -> list:
+    """Spec step 5: top n by prefilter_sim, plus the next early_n by prefilter_sim that may become early signals,
+    plus every story with heat ≥ heat_bypass, plus manual and notes. A paper nobody else picked up and below
+    min_sim is cut first. The early quota exists because a one-source find rarely makes the top n by similarity."""
     keep = [c for c in cands if not (set(c.kinds) <= PAPER_KINDS and c.heat == 1 and c.prefilter_sim < min_sim)]
-    top = {c.story_id for c in sorted(keep, key=lambda c: c.prefilter_sim, reverse=True)[:n]}
+    ranked = sorted(keep, key=lambda c: c.prefilter_sim, reverse=True)
+    early = [c for c in ranked[n:] if may_be_early(c.heat, c.kinds)][:early_n]
+    top = {c.story_id for c in ranked[:n] + early}
     return [c for c in keep if c.story_id in top or c.heat >= heat_bypass or c.manual or c.notes]
 
 
@@ -39,9 +42,13 @@ def final_score(llm_score: float, heat: int, avg_weight: float, owner_actions: s
     return final
 
 
+def may_be_early(heat: int, kinds: list[str]) -> bool:
+    """New and not yet picked up by the channels: few sources, seen on HN/arXiv/HF/GitHub, not in Telegram."""
+    return heat <= 2 and bool(set(kinds) & EARLY_KINDS) and "telegram" not in kinds
+
+
 def is_early_signal(heat: int, llm_score: float, kinds: list[str]) -> bool:
-    """New and not yet picked up by the channels: few sources, high score, seen on HN/arXiv/HF/GitHub, not in Telegram."""
-    return heat <= 2 and llm_score >= 7 and bool(set(kinds) & EARLY_KINDS) and "telegram" not in kinds
+    return may_be_early(heat, kinds) and llm_score >= 7
 
 
 def parse(answer, story_ids: set[int]) -> dict[int, tuple[float, str]]:

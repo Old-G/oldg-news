@@ -23,6 +23,13 @@ def test_prefilter_cuts_lonely_papers_below_min_sim_even_inside_top_n():
     assert [x.story_id for x in score.prefilter(cands, n=5, min_sim=0.3, heat_bypass=3)] == [2, 3]
 
 
+def test_prefilter_early_quota_takes_the_best_possible_early_signals_beyond_top_n():
+    cands = [c(1, 0.9), c(2, 0.8, kinds=("hn",)), c(3, 0.7, kinds=("arxiv",)), c(4, 0.6, kinds=("github_search",)),
+             c(5, 0.65, kinds=("hn", "telegram")), c(6, 0.62, heat=2, kinds=("hf_trending",)), c(7, 0.5)]
+    # top 2 by similarity; then the next 2 that may be early (not 5: already in Telegram) — 3 and 6, not 4
+    assert [x.story_id for x in score.prefilter(cands, n=2, min_sim=0.3, heat_bypass=3, early_n=2)] == [1, 2, 3, 6]
+
+
 def test_final_formula():
     s = settings()
     # 0.6·8/10 + 0.25·4/8 + 0.15·(1.0−0.5)
