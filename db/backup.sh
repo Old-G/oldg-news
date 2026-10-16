@@ -12,9 +12,9 @@ KEEP=${BACKUP_KEEP:-7}
 TABLES="sources items stories digests digest_entries feedback taste_profiles drafts runs"
 
 record() {  # $1 stats json, $2 error or empty
-  psql -qAt -v stats="$1" -v err="$2" \
-    -c "insert into runs (job, finished_at, stats, error) values ('backup', now(), :'stats'::jsonb, nullif(:'err', ''))" \
-    || echo "backup: could not write to runs"
+  # variables are interpolated in stdin, not in -c
+  echo "insert into runs (job, finished_at, stats, error) values ('backup', now(), :'stats'::jsonb, nullif(:'err', ''))" |
+    psql -qAt -v ON_ERROR_STOP=1 -v stats="$1" -v err="$2" || echo "backup: could not write to runs"
 }
 
 dump() {
