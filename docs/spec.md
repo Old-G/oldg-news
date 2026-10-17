@@ -4,7 +4,7 @@ Oct 10, 2026 · @Gleb
 
 ## Цель и границы v1
 
-Radar v1 — личный фильтр: из сотни источников в один ежедневный дайджест на 5–7 историй — обзор дня и по мини-статье на историю, с кнопками обратной связи и черновиками постов по звёздочке. Публикация в канал своих постов в v1 — руками, система даёт отбор и текст.
+Radar v1 — личный фильтр: из сотни источников в один ежедневный дайджест на 5–7 историй — обзор дня и по мини-статье на историю, с кнопками обратной связи и черновиками постов по звёздочке. Публикация своих постов в v1 — твоим нажатием, система даёт отбор, текст и картинку: в Telegram и X — руками (X открывается с готовым текстом), в LinkedIn — кнопкой «Опубликовать» под черновиком через официальный API (решение 17.10.2026).
 
 Один пайплайн — несколько выходов: история хранится структурно и на английском (что это, почему важно, ссылки, теги, heat), а тексты для канала (RU-мини-статья, обзор дня, обзор недели) и черновики для RU-Telegram и EN-каналов генерируются отдельными промптами, не переводом друг друга. Мини-статья самодостаточна: читатель не открывает оригиналы, все факты, цифры и механизм — в тексте.
 
@@ -14,9 +14,9 @@ Radar v1 — личный фильтр: из сотни источников в 
 - Склеивает дубли в истории и считает heat — число независимых источников.
 - Ранжирует по профилю вкуса, собранному из твоего канала-заметок, и по твоим 👍/👎/⭐.
 - Публикует дайджест в твой существующий Telegram-канал волнами в течение дня: утром обзор «Главное за сутки» + «Куда движемся», затем по мини-статье на русском на каждую из 5–7 историй, вечером «Ранние сигналы»; по воскресеньям — пост «Неделя: куда движемся». Бот в личке — пульт управления и статистика.
-- По ⭐ присылает черновики твоих постов: RU для Telegram и EN для X/LinkedIn (EN отключаются `DRAFTS_EN = false`).
+- По ⭐ присылает черновики твоих постов: RU для Telegram и EN для X/LinkedIn (EN отключаются `DRAFTS_EN = false`) и картинку к ним — из статьи или сгенерированную; LinkedIn-черновик публикуется кнопкой.
 
-Не входит в v1: MCP-сервер, автопубликация, X как источник, GitHub trending, веб-интерфейс, мультипользовательский режим, платный тир.
+Не входит в v1: MCP-сервер, автопубликация без твоего нажатия, X как источник, GitHub trending, веб-интерфейс, мультипользовательский режим, платный тир.
 
 Принципы: минимум компонентов (Python + планировщик + один бот), каждый порог живёт в конфиге, каждое решение системы пишется в БД — через 2–3 недели смотрим на данные, а не на ощущения.
 
@@ -144,7 +144,7 @@ X — отдельное решение. Официальный API платны
 
 ## Схема БД
 
-Одиннадцать таблиц: `sources` и `items` — сырьё, `stories` — склеенные истории (единица ранжирования и публикации; мини-статья хранится на истории), `digests` + `digest_entries` — что и как показано (обзор дня — на `digests`), `weekly_posts` — посты «Неделя: куда движемся», `feedback` — твои реакции, `drafts` — черновики, `taste_profiles` + `taste_centroids` — версии вкуса, `runs` — лог запусков. Изменения схемы на живой базе — файлами `db/migrations/NNN_*.sql` (идемпотентно: `add column if not exists`, `create table if not exists`); `schema.sql` всегда равен этому разделу. Эмбеддинг хранится на item и усредняется в centroid истории; HNSW-индекс нужен только на `stories`.
+Тринадцать таблиц: `sources` и `items` — сырьё, `stories` — склеенные истории (единица ранжирования и публикации; мини-статья хранится на истории), `digests` + `digest_entries` — что и как показано (обзор дня — на `digests`), `weekly_posts` — посты «Неделя: куда движемся», `feedback` — твои реакции, `drafts` — черновики (и что из них опубликовано), `story_images` — картинка к постам истории, `oauth_tokens` — доступ к LinkedIn (живёт 60 дней и присылается боту, поэтому в базе, а не в `.env`), `taste_profiles` + `taste_centroids` — версии вкуса, `runs` — лог запусков. Изменения схемы на живой базе — файлами `db/migrations/NNN_*.sql` (идемпотентно: `add column if not exists`, `create table if not exists`); `schema.sql` всегда равен этому разделу. Эмбеддинг хранится на item и усредняется в centroid истории; HNSW-индекс нужен только на `stories`.
 
 ```sql
 create extension if not exists vector;
@@ -265,7 +265,29 @@ create table drafts (
   channel     text not null check (channel in ('tg','x','linkedin')),
   text        text not null,
   model       text,
+  edited_text   text,                         -- твоя правка ответом на черновик; публикуется вместо text
+  published_urn text,                         -- пост в LinkedIn, когда опубликован
+  published_at  timestamptz,
   created_at  timestamptz not null default now()
+);
+
+-- Картинка к постам истории: og:image основной ссылки или сгенерированная
+create table story_images (
+  story_id    bigint primary key references stories(id),
+  kind        text not null check (kind in ('page','generated')),
+  source_url  text,                           -- откуда взята; null у сгенерированной
+  mime        text not null,
+  data        bytea not null,
+  created_at  timestamptz not null default now()
+);
+
+-- Доступ к сетям, где публикуешь (сейчас только LinkedIn)
+create table oauth_tokens (
+  provider      text primary key check (provider in ('linkedin')),
+  access_token  text not null,
+  subject       text not null,                -- urn:li:person:…
+  expires_at    timestamptz not null,
+  updated_at    timestamptz not null default now()
 );
 
 -- Профиль вкуса: версии текста и центроиды
@@ -355,7 +377,7 @@ Job'ы по расписанию: `fetch` каждые 2 часа (шаги 1–
    Затем обзор дня: промпт `overview_ru` по мини-статьям секции `top` → `{summary, direction}` в `digests.overview`. Готовое не пересчитывается: повторный запуск генерирует только недостающее.
 10. **Waves.** Публикация в канал тремя волнами (формат и состав — в разделе «Бот»). Волна сначала догоняет подготовку (шаги 5–9, идемпотентно — если утренний `daily` упал или не успел), затем шлёт `digest_entries` с пустым `tg_msg_id`, чья волна наступила; `tg_msg_id` пишется сразу после отправки — повторный запуск волны ничего не дублирует. Волна, которая упала (нет сети) или застала незаписанными обзор (пока не отправлен первый пост дня) или мини-статьи своих историй, ничего не шлёт и повторяется через `WAVE_RETRY_MIN` (15 мин), до `WAVE_RETRIES` (8) раз; последняя попытка отправляет то, что есть — выпуск выходит всегда. Пост, который упёрся в сетевую ошибку Telegram, отправляется ещё до `TG_SEND_RETRIES` раз с паузами `TG_SEND_RETRY_S`, 2×, 3×; flood wait — пауза, сколько просит Telegram; долгий сбой роняет волну, и её посты уходят с повтора (таймаут может скрыть дошедшее сообщение — тогда пост выйдет дважды, это лучше, чем потерять). История, для которой мини-статья так и не получилась, публикуется короткой карточкой из полей enrich (`title_clean`, `summary`, `why_it_matters`).
 11. **Feedback.** Callback от кнопки → `feedback(action, origin='bot')`. `down` → `status = 'dismissed'`. `star` → `status = 'starred'` и шаг 12.
-12. **Drafts.** По `star` (только твоему, origin bot): worker раз в `DRAFTS_POLL_S` (60 с) находит ⭐ без черновиков за последние `DRAFTS_WINDOW_H` (72 ч) → промпт `draft_ru` сильной моделью (с `DRAFTS_EN` — ещё `draft_en`); на вход — английская запись истории (не RU-мини-статья, чтобы EN не читался как перевод) и выдержка из материалов истории до `DRAFT_SOURCE_CHARS` (6000 символов) → бот присылает RU-черновик (с `DRAFTS_EN` — ещё EN для X и EN для LinkedIn) отдельными сообщениями, готовыми к копированию → по записи на текст в `drafts`. Сначала отправка, потом запись: сбой между ними повторит черновики, но не потеряет. Опрос без новых ⭐ ничего не пишет, даже строку в `runs`.
+12. **Drafts.** По `star` (только твоему, origin bot): worker раз в `DRAFTS_POLL_S` (60 с) находит ⭐ без черновиков за последние `DRAFTS_WINDOW_H` (72 ч) → промпт `draft_ru` сильной моделью (с `DRAFTS_EN` — ещё `draft_en`); на вход — английская запись истории (не RU-мини-статья, чтобы EN не читался как перевод) и выдержка из материалов истории до `DRAFT_SOURCE_CHARS` (6000 символов) → бот присылает RU-черновик (с `DRAFTS_EN` — ещё EN для X и EN для LinkedIn) отдельными сообщениями, готовыми к копированию → по записи на текст в `drafts`. Перед текстами — картинка (`story_images`, одна на историю): `og:image` основной ссылки (JPEG/PNG/GIF, ≤ 5 МБ; arXiv и x.com не дают своей картинки), иначе промпт `image` моделью `IMAGE_MODEL` в стиле канала; сбой картинки черновики не останавливает. Сначала отправка, потом запись: сбой между ними повторит черновики, но не потеряет. Опрос без новых ⭐ ничего не пишет, даже строку в `runs`.
 13. **Weekly.** В воскресенье: истории всех дайджестов недели (пн–вс) с их мини-статьями (`title`, `lead`, `why_it_matters`) и твоими ⭐/👍 (origin bot) → промпт `weekly_ru` сильной моделью → `{intro, trends[], watch}` в `weekly_posts` → пост «Неделя: куда движемся» в канал. Неделя публикуется один раз (`week_start` unique, `tg_msg_id`).
 
 Еженедельно, `weekly_taste`: пересборка профиля вкуса (раздел «Профиль вкуса и обратная связь»).
@@ -364,7 +386,7 @@ Job'ы по расписанию: `fetch` каждые 2 часа (шаги 1–
 
 ## Промпты
 
-Девять промптов, инструкции все на английском (так стабильнее у любой модели), даже когда ответ на русском; лежат в `prompts/*.md` с `{placeholders}`. Общие правила: ответ только JSON там, где указано; парсер срезает \`\`\`-ограждения; при невалидном JSON — один повтор с добавкой «Return valid JSON only»; токены и стоимость каждого вызова пишутся в `runs.stats`. Мнение в черновиках пишется готовым, от первого лица и только из фактов истории — ты публикуешь как есть или подкручиваешь (решение 17.10.2026: варианты в скобках никто не заполнял). Мини-статьи и обзоры — только факты из источников: чего в источниках нет, то названо «не указано», а не додумано.
+Десять промптов, инструкции все на английском (так стабильнее у любой модели), даже когда ответ на русском; лежат в `prompts/*.md` с `{placeholders}`. Общие правила: ответ только JSON там, где указано; парсер срезает \`\`\`-ограждения; при невалидном JSON — один повтор с добавкой «Return valid JSON only»; токены и стоимость каждого вызова пишутся в `runs.stats`. Мнение в черновиках пишется готовым, от первого лица и только из фактов истории — ты публикуешь как есть или подкручиваешь (решение 17.10.2026: варианты в скобках никто не заполнял). Мини-статьи и обзоры — только факты из источников: чего в источниках нет, то названо «не указано», а не додумано.
 
 **1. `taste_profile.md` — профиль вкуса** (bootstrap из канала-заметок; дешёвой моделью достаточно, сильная даёт профиль точнее)
 
@@ -565,7 +587,7 @@ From one story record, draft two English posts for an AI engineer who ships agen
 Voice: specific, calm, practitioner. No hype words (game-changer, huge, insane), no emoji. No hashtags on X; at most 2 on LinkedIn. American spelling.
 
 X post: ≤ 260 characters. First clause is the insight; one concrete number or mechanism; link last on its own line.
-LinkedIn post: 80–140 words. First line stands alone as the hook (what changed for people building agents), then 2–3 short paragraphs: what it is, what is actually new, what to test first; end with one question to readers; link on the last line.
+LinkedIn post: 80–140 words. First line stands alone as the hook (what changed for people building agents), then 2–3 short paragraphs: what it is, what is actually new, what to test first; end with one question to readers. No link in the text: LinkedIn shows the source as a card under the post.
 
 Both posts carry his take, written out in first person — 1–2 sentences with the one angle a practitioner would actually hold (what he would test first, what he doubts, or what it means for agent builders), concrete and grounded in the record. No placeholders, brackets or alternatives: he posts it as is or tweaks a word.
 
@@ -575,6 +597,17 @@ USER
 {story_record_json}
 Best source excerpt:
 {best_item_text}
+```
+
+**9. `image.md` — картинка к посту** (`IMAGE_MODEL`, по ⭐, только когда у основной ссылки нет своей картинки; SYSTEM — стиль, USER — история, в модель уходят оба одним текстом)
+
+```text
+SYSTEM
+An editorial illustration for a social post about one piece of AI engineering news. Style: flat, minimal vector illustration on a plain white background; palette strictly dark brown #4B1E0C, coral #E8805F and pale peach #F6C9B5; simple geometric shapes, rounded strokes, generous empty space. Show one clear visual metaphor for the story's mechanism — not robots, glowing brains, circuit boards or chat bubbles. No text, letters, numbers, logos or UI screenshots. Landscape.
+
+USER
+Story: {title}
+What it is: {summary}
 ```
 
 ## Бот
@@ -645,7 +678,11 @@ Worker публикует дайджест в твой существующий 
 👀 <b>Присмотреться:</b> {watch}
 ```
 
-По `⭐` бот присылает RU-черновик (с `DRAFTS_EN` — ещё EN X-черновик и EN LinkedIn-черновик) — чистым текстом без разметки, чтобы копировалось как есть. Под EN-черновиками — кнопки «Открыть в X» и «Открыть в LinkedIn»: окно нового поста в сети с уже вставленным текстом (`x.com/intent/post?text=`, `linkedin.com/feed/?shareActive=true&text=`); ты при желании подкручиваешь и публикуешь сам. Публикация руками в v1: доступа к твоим аккаунтам у Radar нет, X API не нужен.
+По `⭐` бот присылает картинку к посту, RU-черновик (с `DRAFTS_EN` — ещё EN X-черновик и EN LinkedIn-черновик) — чистым текстом без разметки, чтобы копировалось как есть.
+
+- Под X-черновиком — кнопка «Открыть в X»: окно нового поста с уже вставленным текстом (`x.com/intent/post?text=`), публикуешь сам; ссылка в конце даёт под постом карточку с картинкой источника. Доступа к X у Radar нет, X API не нужен. Сгенерированную картинку в X прикладываешь руками.
+- Под LinkedIn-черновиком — кнопка «Опубликовать в LinkedIn»: бот публикует его в твоём профиле через API (`w_member_social`): текст (зарезервированные символы Little Text Format экранируются), под ним карточка основной ссылки с картинкой истории (без ссылки — просто картинка). Чтобы поправить текст до публикации, ответь на черновик исправленным текстом — опубликуется он (`drafts.edited_text`). После публикации кнопка меняется на «✓ Открыть пост»; повторное нажатие ничего не публикует. Поправить уже опубликованное — в самом LinkedIn.
+- Доступ: приложение в LinkedIn Developer Portal с продуктами Share on LinkedIn и Sign In with LinkedIn using OpenID Connect; токен (scopes `openid profile w_member_social`) создаёшь в Developer Portal → OAuth Token Tools и присылаешь боту `/linkedin <токен>`. Бот проверяет его (`/v2/userinfo`), хранит в `oauth_tokens` на `LINKEDIN_TOKEN_DAYS` (60) дней, удаляет твоё сообщение с токеном и за `LINKEDIN_REMIND_DAYS` (5) дней до конца напоминает в личку обновить.
 
 Команды:
 
@@ -654,6 +691,7 @@ Worker публикует дайджест в твой существующий 
 - `/today` — прислать в личку уже опубликованное сегодня: обзор и мини-статьи.
 - `/stats` — за 7 дней: историй всего, в дайджесте, 👍/👎/⭐, missed, стоимость LLM.
 - `/source <tg-ссылка> on|off` — включить или выключить источник без захода в БД.
+- `/linkedin <токен>` — подключить или продлить публикацию в LinkedIn (см. выше); `/linkedin` без токена — до какого числа действует.
 
 Команды в личке проверяют `chat.id == OWNER_CHAT_ID`; всё остальное молча игнорируется; callback'и под постами в канале принимаются от любого, с разделением по origin, как выше.
 
@@ -730,6 +768,8 @@ Bootstrap (`jobs/bootstrap_taste.py`, один раз):
 | WAVE\_RETRIES / WAVE\_RETRY\_MIN | 8 / 15 мин | повторы до следующей волны | выпуск уходит без обзора из-за коротких сбоев → больше |
 | TG\_SEND\_RETRIES / TG\_SEND\_RETRY\_S | 3 / 30 с | 1–5 / 10–120 с | волна падает от коротких сбоев сети → больше |
 | DRAFTS\_POLL\_S | 60 | 30–300 | черновики приходят долго → меньше |
+| IMAGE\_MODEL / IMAGE\_QUALITY | gpt-image-2 / medium | пусто — без генерации | картинки слабые → quality high; дорого → low |
+| LINKEDIN\_VERSION | 202608 | не старше года | LinkedIn отвечает 426 → свежее |
 | DRAFTS\_EN | true | true / false | X и LinkedIn не ведутся → false |
 | DRAFT\_SOURCE\_CHARS | 6 000 | 3 000–20 000 | в черновике нет конкретной детали → больше |
 | EARLY\_N | 3 | 2–5 | секция пустая → больше; шумная → меньше |

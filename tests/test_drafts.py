@@ -42,5 +42,5 @@ def test_share_button_opens_the_compose_window_with_the_whole_text():
     label, url = share_button("x", "Agents & MCP: 2× faster?\nhttps://a.dev/1")
     assert label == "Открыть в X"
     assert url == "https://x.com/intent/post?text=Agents%20%26%20MCP%3A%202%C3%97%20faster%3F%0Ahttps%3A%2F%2Fa.dev%2F1"
-    assert share_button("linkedin", "Hi")[1] == "https://www.linkedin.com/feed/?shareActive=true&text=Hi"
+    assert share_button("linkedin", "Hi") is None  # published through the API
     assert share_button("tg", "Привет") is None

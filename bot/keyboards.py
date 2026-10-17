@@ -17,3 +17,19 @@ def parse(data: str | None) -> tuple[str, int] | None:
     if len(parts) == 3 and parts[0] == "fb" and parts[2].isdigit():
         return parts[1], int(parts[2])
     return None
+
+
+def publish_keyboard(story_id: int) -> InlineKeyboardMarkup:
+    """Under a LinkedIn draft: the bot publishes it to his profile (spec: «Бот»)."""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Опубликовать в LinkedIn", callback_data=f"li:pub:{story_id}")]])
+
+
+def published_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✓ Открыть пост", url=url)]])
+
+
+def parse_publish(data: str | None) -> int | None:
+    """story_id from «li:pub:<id>»."""
+    parts = (data or "").split(":")
+    return int(parts[2]) if len(parts) == 3 and parts[:2] == ["li", "pub"] and parts[2].isdigit() else None

@@ -667,6 +667,57 @@ def add_drafts(conn: psycopg.Connection, story_id: int, rows: list[tuple[str, st
         )
 
 
+def story_image(conn: psycopg.Connection, story_id: int) -> tuple[str, str | None, str, bytes] | None:
+    """(kind, source_url, mime, data) of the story's picture."""
+    row = conn.execute("select kind, source_url, mime, data from story_images where story_id = %s", (story_id,)).fetchone()
+    return (row[0], row[1], row[2], bytes(row[3])) if row else None
+
+
+def save_story_image(conn: psycopg.Connection, story_id: int, kind: str, source_url: str | None, mime: str,
+                     data: bytes) -> None:
+    conn.execute(
+        "insert into story_images (story_id, kind, source_url, mime, data) values (%s, %s, %s, %s, %s)"
+        " on conflict (story_id) do nothing",
+        (story_id, kind, source_url, mime, data),
+    )
+
+
+def linkedin_draft(conn: psycopg.Connection, story_id: int) -> dict | None:
+    """The story's newest LinkedIn draft: id, text to publish (your edit if any), published_urn."""
+    row = conn.execute(
+        "select id, coalesce(edited_text, text), published_urn from drafts"
+        " where story_id = %s and channel = 'linkedin' order by id desc limit 1",
+        (story_id,),
+    ).fetchone()
+    return {"id": row[0], "text": row[1], "published_urn": row[2]} if row else None
+
+
+def set_draft_edit(conn: psycopg.Connection, draft_id: int, text: str) -> None:
+    conn.execute("update drafts set edited_text = %s where id = %s", (text, draft_id))
+
+
+def set_draft_published(conn: psycopg.Connection, draft_id: int, urn: str) -> None:
+    conn.execute("update drafts set published_urn = %s, published_at = now() where id = %s", (urn, draft_id))
+
+
+def oauth_token(conn: psycopg.Connection, provider: str) -> dict | None:
+    row = conn.execute("select access_token, subject, expires_at from oauth_tokens where provider = %s",
+                       (provider,)).fetchone()
+    return {"token": row[0], "subject": row[1], "expires_at": row[2]} if row else None
+
+
+def save_oauth_token(conn: psycopg.Connection, provider: str, token: str, subject: str, days: int) -> None:
+    conn.execute(
+        """
+        insert into oauth_tokens (provider, access_token, subject, expires_at)
+        values (%s, %s, %s, now() + make_interval(days => %s))
+        on conflict (provider) do update set access_token = excluded.access_token, subject = excluded.subject,
+                                             expires_at = excluded.expires_at, updated_at = now()
+        """,
+        (provider, token, subject, days),
+    )
+
+
 # --- weekly taste and /missed --------------------------------------------------
 
 POSITIVE = "(f.action in ('star', 'up', 'missed') and f.origin in ('bot', 'notes'))"

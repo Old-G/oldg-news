@@ -6,10 +6,10 @@ import re
 from urllib.parse import quote
 
 _FENCE = re.compile(r"^```\w*\s*(.*?)\s*```$", re.S)
-# the site's own compose window with the text filled in: he edits the take and presses Post himself
+# the site's own compose window with the text filled in: he presses Post himself (LinkedIn ignores a prefilled
+# text, so its drafts are published through the API instead — bot/linkedin.py)
 _SHARE = {
     "x": ("Открыть в X", "https://x.com/intent/post?text="),
-    "linkedin": ("Открыть в LinkedIn", "https://www.linkedin.com/feed/?shareActive=true&text="),
 }
 
 
@@ -47,7 +47,7 @@ def parse_en(answer) -> tuple[str, str]:
 
 
 def share_button(channel: str, text: str) -> tuple[str, str] | None:
-    """(label, url) of the button that opens the draft in the network's compose window; None for Telegram."""
+    """(label, url) of the button that opens the draft in the network's compose window; None for the others."""
     if channel not in _SHARE:
         return None
     label, base = _SHARE[channel]

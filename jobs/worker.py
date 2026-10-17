@@ -56,6 +56,13 @@ async def run_drafts() -> None:
         log.exception("drafts failed")
 
 
+async def run_linkedin_reminder() -> None:
+    try:
+        await drafts.remind_linkedin()
+    except Exception:
+        log.exception("linkedin reminder failed")
+
+
 async def run_weekly_taste() -> None:
     try:
         await weekly_taste.run()
@@ -82,6 +89,7 @@ async def main() -> None:
     scheduler.add_job(run_fetch, CronTrigger(hour=f"*/{s.fetch_every_h}", minute=0, timezone=tz), id="fetch", **common)
     # ⭐ → drafts in the owner's DM; runs even when the waves are paused
     scheduler.add_job(run_drafts, IntervalTrigger(seconds=s.drafts_poll_s, timezone=tz), id="drafts", **common)
+    scheduler.add_job(run_linkedin_reminder, CronTrigger(hour=10, minute=0, timezone=tz), id="linkedin_reminder", **common)
 
     def at(hhmm: str, **kw) -> CronTrigger:
         hour, minute = hhmm.split(":")

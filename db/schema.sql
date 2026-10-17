@@ -116,7 +116,29 @@ create table drafts (
   channel     text not null check (channel in ('tg','x','linkedin')),
   text        text not null,
   model       text,
+  edited_text   text,                         -- твоя правка ответом на черновик; публикуется вместо text
+  published_urn text,                         -- пост в LinkedIn, когда опубликован
+  published_at  timestamptz,
   created_at  timestamptz not null default now()
+);
+
+-- Картинка к постам истории: og:image основной ссылки или сгенерированная
+create table story_images (
+  story_id    bigint primary key references stories(id),
+  kind        text not null check (kind in ('page','generated')),
+  source_url  text,                           -- откуда взята; null у сгенерированной
+  mime        text not null,
+  data        bytea not null,
+  created_at  timestamptz not null default now()
+);
+
+-- Доступ к сетям, где публикуешь (сейчас только LinkedIn)
+create table oauth_tokens (
+  provider      text primary key check (provider in ('linkedin')),
+  access_token  text not null,
+  subject       text not null,                -- urn:li:person:…
+  expires_at    timestamptz not null,
+  updated_at    timestamptz not null default now()
 );
 
 -- Профиль вкуса: версии текста и центроиды

@@ -1,5 +1,5 @@
-"""drafts job: for every ⭐ the owner pressed, a draft of his own RU Telegram post to his DM (spec step 12);
-with DRAFTS_EN also EN drafts for X and LinkedIn.
+"""drafts job: for every ⭐ the owner pressed, the post's picture and a draft of his own RU Telegram post to his DM
+(spec step 12); with DRAFTS_EN also EN drafts for X («Открыть в X») and LinkedIn («Опубликовать в LinkedIn»).
 
     python -m jobs.drafts      # handle the pending ⭐ once
 
@@ -12,12 +12,14 @@ import asyncio
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
 from adapters.rss import make_http_client
+from bot.keyboards import publish_keyboard
 from config import Settings, get_settings
-from core import article, digest, drafts
+from core import article, digest, drafts, images
 from core.llm import Usage, complete, complete_json, load_prompt, make_client, render
 from core.normalize import is_specific_url
 from db import queries
@@ -47,12 +49,35 @@ async def write(s: Settings, conn, llm, http, usage: Usage, story_id: int) -> li
     return [("ru", "tg", ru), ("en", "x", x), ("en", "linkedin", linkedin)]
 
 
-def share_keyboard(channel: str, text: str) -> InlineKeyboardMarkup | None:
-    """X and LinkedIn drafts carry a button that opens the network with the text filled in (publishing is his)."""
+def share_keyboard(channel: str, text: str, story_id: int) -> InlineKeyboardMarkup | None:
+    """X: a button that opens X with the text filled in; LinkedIn: a button the bot publishes by."""
+    if channel == "linkedin":
+        return publish_keyboard(story_id)
     if not (button := drafts.share_button(channel, text)):
         return None
     label, url = button
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]])
+
+
+async def picture(s: Settings, conn, llm, http, usage: Usage, story_id: int) -> tuple[str, bytes] | None:
+    """(kind, data) of the story's picture: stored, else the main link's og:image, else drawn (IMAGE_MODEL).
+    None when there is none; a failure never stops the drafts."""
+    if found := queries.story_image(conn, story_id):
+        return found[0], found[3]
+    card = queries.story_card(conn, story_id)
+    main = next((u for u in digest.story_links(card, is_specific_url) if is_specific_url(u)), None)
+    try:
+        pic = await images.from_page(http, s, main) if main else None
+        if not pic and s.image_model:
+            pic = await images.generate(llm, s, usage, card["title"] or "", card["summary"] or "")
+    except Exception:
+        log.exception("picture for story %s failed", story_id)
+        return None
+    if not pic:
+        return None
+    queries.save_story_image(conn, story_id, pic.kind, pic.source_url, pic.mime, pic.data)
+    conn.commit()
+    return pic.kind, pic.data
 
 
 async def run() -> dict | None:
@@ -75,8 +100,13 @@ async def run() -> dict | None:
                 _failures[sid] = _failures.get(sid, 0) + 1
                 stats["failed"].append(sid)
                 continue
+            if pic := await picture(s, conn, llm, http, usage, sid):
+                kind, data = pic
+                caption = "Картинка к посту — из статьи" if kind == "page" else "Картинка к посту — сгенерирована"
+                await bot.send_photo(s.owner_chat_id, BufferedInputFile(data, f"story-{sid}"), caption=caption)
             for _, channel, text in texts:  # plain text, no markup: copied as is
-                await bot.send_message(s.owner_chat_id, text, parse_mode=None, reply_markup=share_keyboard(channel, text),
+                await bot.send_message(s.owner_chat_id, text, parse_mode=None,
+                                       reply_markup=share_keyboard(channel, text, sid),
                                        link_preview_options=LinkPreviewOptions(is_disabled=True))
             queries.add_drafts(conn, sid, texts, s.strong_model)
             conn.commit()
@@ -89,6 +119,25 @@ async def run() -> dict | None:
     log.info("drafts done: %s", stats)
     conn.close()
     return stats
+
+
+async def remind_linkedin() -> None:
+    """In the last LINKEDIN_REMIND_DAYS of the LinkedIn access, once a day: renew it (spec: «Бот»)."""
+    s = get_settings()
+    with queries.connect(s.database_url) as conn:
+        token = queries.oauth_token(conn, "linkedin")
+    if not token:
+        return
+    left = (token["expires_at"] - datetime.now(timezone.utc)).days
+    if left > s.linkedin_remind_days:
+        return
+    bot = make_bot(s)
+    try:
+        when = "истёк" if left < 0 else f"истекает через {left} дн." if left else "истекает сегодня"
+        await bot.send_message(s.owner_chat_id, f"Доступ к LinkedIn {when}. Создай новый токен в Developer Portal → "
+                                                "OAuth Token Tools и пришли /linkedin <токен>.")
+    finally:
+        await bot.session.close()
 
 
 if __name__ == "__main__":

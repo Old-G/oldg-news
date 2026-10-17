@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     llm_prices: dict[str, tuple[float, float]] = {
         "gpt-6-luna": (0.10, 0.50),
         "gpt-6.1-sol": (2.00, 10.00),
+        "gpt-image-2": (5.00, 30.00),  # text in, image out; third-party listings, 2026-10-17
     }
 
     # Taste profile
@@ -100,6 +101,13 @@ class Settings(BaseSettings):
     enrich_text_chars: int = 2000
     article_source_chars: int = 20_000
     draft_source_chars: int = 6_000  # the «best source excerpt» of the draft prompts
+    image_model: str = ""  # pictures for the drafts when the story's page has none; empty = no generation
+    image_quality: str = "medium"
+    image_max_bytes: int = 5_000_000
+    image_min_width: int = 400  # a smaller og:image is an icon, not a picture
+    linkedin_version: str = "202608"  # LinkedIn-Version header, YYYYMM; a version lives about a year
+    linkedin_token_days: int = 60
+    linkedin_remind_days: int = 5
     drafts_en: bool = True  # EN drafts for X and LinkedIn next to the RU one
     drafts_poll_s: int = 60  # the worker looks for new ⭐ this often
     drafts_window_h: int = 72  # a ⭐ older than this without drafts is not picked up any more
