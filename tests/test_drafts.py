@@ -1,6 +1,6 @@
 import pytest
 
-from core.drafts import clean_ru, parse_en, story_record
+from core.drafts import clean_ru, parse_en, share_button, story_record
 from core.llm import load_prompt
 
 
@@ -36,3 +36,11 @@ def test_draft_prompts_take_the_record_and_the_excerpt(name):
     import re
     p = load_prompt(name)
     assert set(re.findall(r"\{(\w+)\}", p.system + p.user)) == {"story_record_json", "best_item_text"}
+
+
+def test_share_button_opens_the_compose_window_with_the_whole_text():
+    label, url = share_button("x", "Agents & MCP: 2× faster?\nhttps://a.dev/1")
+    assert label == "Открыть в X"
+    assert url == "https://x.com/intent/post?text=Agents%20%26%20MCP%3A%202%C3%97%20faster%3F%0Ahttps%3A%2F%2Fa.dev%2F1"
+    assert share_button("linkedin", "Hi")[1] == "https://www.linkedin.com/feed/?shareActive=true&text=Hi"
+    assert share_button("tg", "Привет") is None

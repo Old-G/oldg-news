@@ -13,7 +13,7 @@ import json
 import logging
 import sys
 
-from aiogram.types import LinkPreviewOptions
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
 from adapters.rss import make_http_client
 from config import Settings, get_settings
@@ -47,6 +47,14 @@ async def write(s: Settings, conn, llm, http, usage: Usage, story_id: int) -> li
     return [("ru", "tg", ru), ("en", "x", x), ("en", "linkedin", linkedin)]
 
 
+def share_keyboard(channel: str, text: str) -> InlineKeyboardMarkup | None:
+    """X and LinkedIn drafts carry a button that opens the network with the text filled in (publishing is his)."""
+    if not (button := drafts.share_button(channel, text)):
+        return None
+    label, url = button
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]])
+
+
 async def run() -> dict | None:
     s = get_settings()
     conn = queries.connect(s.database_url)
@@ -67,8 +75,8 @@ async def run() -> dict | None:
                 _failures[sid] = _failures.get(sid, 0) + 1
                 stats["failed"].append(sid)
                 continue
-            for _, _, text in texts:  # plain text, no markup: copied as is
-                await bot.send_message(s.owner_chat_id, text, parse_mode=None,
+            for _, channel, text in texts:  # plain text, no markup: copied as is
+                await bot.send_message(s.owner_chat_id, text, parse_mode=None, reply_markup=share_keyboard(channel, text),
                                        link_preview_options=LinkPreviewOptions(is_disabled=True))
             queries.add_drafts(conn, sid, texts, s.strong_model)
             conn.commit()

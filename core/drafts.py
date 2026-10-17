@@ -3,8 +3,14 @@ EN for X and LinkedIn (`draft_en`, off unless DRAFTS_EN). Strong model; the reco
 so the EN posts are written from the record and never read as a translation."""
 
 import re
+from urllib.parse import quote
 
 _FENCE = re.compile(r"^```\w*\s*(.*?)\s*```$", re.S)
+# the site's own compose window with the text filled in: he edits the take and presses Post himself
+_SHARE = {
+    "x": ("Открыть в X", "https://x.com/intent/post?text="),
+    "linkedin": ("Открыть в LinkedIn", "https://www.linkedin.com/feed/?shareActive=true&text="),
+}
 
 
 def story_record(card: dict, links: list[str]) -> dict:
@@ -38,3 +44,11 @@ def parse_en(answer) -> tuple[str, str]:
     if not (isinstance(x, str) and x.strip() and isinstance(li, str) and li.strip()):
         raise ValueError("draft_en: x and linkedin are required")
     return x.strip(), li.strip()
+
+
+def share_button(channel: str, text: str) -> tuple[str, str] | None:
+    """(label, url) of the button that opens the draft in the network's compose window; None for Telegram."""
+    if channel not in _SHARE:
+        return None
+    label, base = _SHARE[channel]
+    return label, base + quote(text, safe="")
