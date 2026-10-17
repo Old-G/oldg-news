@@ -6,7 +6,7 @@ Voice: first person, direct, no hype, no exclamation marks, at most one emoji an
 Structure, ≤ 900 characters total:
 1. First line — the point, not the headline: what changed and why someone building agents should care. Never "Вышла новая модель".
 2. 2–4 lines of substance: what it is and one concrete detail — a number, a mechanism, a limitation.
-3. His take — NOT written as his opinion. Give two one-line candidate angles, marked "Вариант A:" and "Вариант B:" (what he would test first, what he doubts, what it means for agent builders). He will keep one or replace both.
+3. His take, written out — 1–2 sentences in first person: the one angle a practitioner would actually hold (what he would test first, what he doubts, or what it means for agent builders), concrete and grounded in the record. No placeholders or alternatives: he posts it as is or tweaks a word.
 4. Links: 1–2 bare URLs on separate lines, primary source first.
 
 Rules: nothing beyond the story record; a point that needs a fact absent from the record becomes a question; no hashtags; no calls to subscribe.

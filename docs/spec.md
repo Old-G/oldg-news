@@ -364,7 +364,7 @@ Job'ы по расписанию: `fetch` каждые 2 часа (шаги 1–
 
 ## Промпты
 
-Девять промптов, инструкции все на английском (так стабильнее у любой модели), даже когда ответ на русском; лежат в `prompts/*.md` с `{placeholders}`. Общие правила: ответ только JSON там, где указано; парсер срезает \`\`\`-ограждения; при невалидном JSON — один повтор с добавкой «Return valid JSON only»; токены и стоимость каждого вызова пишутся в `runs.stats`. Мнение в черновиках всегда помечено как варианты — твоя позиция остаётся твоей. Мини-статьи и обзоры — только факты из источников: чего в источниках нет, то названо «не указано», а не додумано.
+Девять промптов, инструкции все на английском (так стабильнее у любой модели), даже когда ответ на русском; лежат в `prompts/*.md` с `{placeholders}`. Общие правила: ответ только JSON там, где указано; парсер срезает \`\`\`-ограждения; при невалидном JSON — один повтор с добавкой «Return valid JSON only»; токены и стоимость каждого вызова пишутся в `runs.stats`. Мнение в черновиках пишется готовым, от первого лица и только из фактов истории — ты публикуешь как есть или подкручиваешь (решение 17.10.2026: варианты в скобках никто не заполнял). Мини-статьи и обзоры — только факты из источников: чего в источниках нет, то названо «не указано», а не додумано.
 
 **1. `taste_profile.md` — профиль вкуса** (bootstrap из канала-заметок; дешёвой моделью достаточно, сильная даёт профиль точнее)
 
@@ -545,7 +545,7 @@ Voice: first person, direct, no hype, no exclamation marks, at most one emoji an
 Structure, ≤ 900 characters total:
 1. First line — the point, not the headline: what changed and why someone building agents should care. Never "Вышла новая модель".
 2. 2–4 lines of substance: what it is and one concrete detail — a number, a mechanism, a limitation.
-3. His take — NOT written as his opinion. Give two one-line candidate angles, marked "Вариант A:" and "Вариант B:" (what he would test first, what he doubts, what it means for agent builders). He will keep one or replace both.
+3. His take, written out — 1–2 sentences in first person: the one angle a practitioner would actually hold (what he would test first, what he doubts, or what it means for agent builders), concrete and grounded in the record. No placeholders or alternatives: he posts it as is or tweaks a word.
 4. Links: 1–2 bare URLs on separate lines, primary source first.
 
 Rules: nothing beyond the story record; a point that needs a fact absent from the record becomes a question; no hashtags; no calls to subscribe.
@@ -567,7 +567,7 @@ Voice: specific, calm, practitioner. No hype words (game-changer, huge, insane),
 X post: ≤ 260 characters. First clause is the insight; one concrete number or mechanism; link last on its own line.
 LinkedIn post: 80–140 words. First line stands alone as the hook (what changed for people building agents), then 2–3 short paragraphs: what it is, what is actually new, what to test first; end with one question to readers; link on the last line.
 
-Both posts include a placeholder "[TAKE: A — ... / B — ...]" with two one-line candidate angles for his own opinion. Never state an opinion as his outside that placeholder.
+Both posts carry his take, written out in first person — 1–2 sentences with the one angle a practitioner would actually hold (what he would test first, what he doubts, or what it means for agent builders), concrete and grounded in the record. No placeholders, brackets or alternatives: he posts it as is or tweaks a word.
 
 Rules: facts only from the record; names and numbers exact. An EN post is not a translation of the RU post — it is written from the record for a global practitioner audience.
 
@@ -645,7 +645,7 @@ Worker публикует дайджест в твой существующий 
 👀 <b>Присмотреться:</b> {watch}
 ```
 
-По `⭐` бот присылает RU-черновик (с `DRAFTS_EN` — ещё EN X-черновик и EN LinkedIn-черновик) — чистым текстом без разметки, чтобы копировалось как есть. Под EN-черновиками — кнопки «Открыть в X» и «Открыть в LinkedIn»: окно нового поста в сети с уже вставленным текстом (`x.com/intent/post?text=`, `linkedin.com/feed/?shareActive=true&text=`); ты правишь [TAKE] и публикуешь сам. Публикация руками в v1: доступа к твоим аккаунтам у Radar нет, X API не нужен.
+По `⭐` бот присылает RU-черновик (с `DRAFTS_EN` — ещё EN X-черновик и EN LinkedIn-черновик) — чистым текстом без разметки, чтобы копировалось как есть. Под EN-черновиками — кнопки «Открыть в X» и «Открыть в LinkedIn»: окно нового поста в сети с уже вставленным текстом (`x.com/intent/post?text=`, `linkedin.com/feed/?shareActive=true&text=`); ты при желании подкручиваешь и публикуешь сам. Публикация руками в v1: доступа к твоим аккаунтам у Radar нет, X API не нужен.
 
 Команды:
 
