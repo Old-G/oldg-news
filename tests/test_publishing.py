@@ -1,10 +1,13 @@
+import asyncio
 import struct
+
+import httpx
 
 import pytest
 
 from adapters.linkedin import escape, post_body, post_url, without_trailing_links
 from bot.keyboards import parse_publish, publish_keyboard
-from core.images import og_image, page_url, sniff, width
+from core.images import _get_bytes, og_image, page_url, sniff, width
 
 
 def png(w, h=10):
@@ -66,3 +69,26 @@ def test_publish_button_round_trip():
     data = publish_keyboard(42).inline_keyboard[0][0].callback_data
     assert parse_publish(data) == 42
     assert parse_publish("fb:up:42") is None and parse_publish(None) is None
+
+
+def test_a_picture_over_the_cap_is_dropped_while_reading():
+    big = png(1200) + b"\x00" * 5000
+
+    def handler(request):  # no content-length: the cap must hold on the stream itself
+        return httpx.Response(200, stream=_Chunks(big))
+
+    async def get(cap):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            return await _get_bytes(http, "https://cdn.dev/x.png", cap)
+
+    assert asyncio.run(get(10_000)) == big
+    assert asyncio.run(get(1_000)) is None
+
+
+class _Chunks(httpx.AsyncByteStream):
+    def __init__(self, data):
+        self.data = data
+
+    async def __aiter__(self):
+        for i in range(0, len(self.data), 512):
+            yield self.data[i:i + 512]

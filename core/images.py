@@ -74,6 +74,21 @@ def page_url(url: str) -> str | None:
     return None
 
 
+async def _get_bytes(http: httpx.AsyncClient, url: str, cap: int) -> bytes | None:
+    """The file, read as a stream and dropped as soon as it passes `cap` bytes (None): the URL comes from a
+    stranger's page, so its size is not trusted."""
+    async with http.stream("GET", url) as r:
+        r.raise_for_status()
+        if int(r.headers.get("content-length") or 0) > cap:
+            return None
+        body = bytearray()
+        async for chunk in r.aiter_bytes():
+            body += chunk
+            if len(body) > cap:
+                return None
+    return bytes(body)
+
+
 async def from_page(http: httpx.AsyncClient, s: Settings, url: str) -> Picture | None:
     """The main link's og:image when it is a PNG/JPEG/GIF picture at least IMAGE_MIN_WIDTH wide. Never raises."""
     page = page_url(url)
@@ -83,11 +98,12 @@ async def from_page(http: httpx.AsyncClient, s: Settings, url: str) -> Picture |
         img_url = og_image(await _get_text(http, page), page)
         if not img_url:
             return None
-        r = await http.get(img_url)
-        r.raise_for_status()
-        data = r.content
+        data = await _get_bytes(http, img_url, s.image_max_bytes)
+        if data is None:
+            log.info("og:image of %s skipped: over %s bytes", url, s.image_max_bytes)
+            return None
         mime = sniff(data)
-        if not mime or len(data) > s.image_max_bytes or (width(data) or 0) < s.image_min_width:
+        if not mime or (width(data) or 0) < s.image_min_width:
             log.info("og:image of %s skipped: %s, %s bytes, width %s", url, mime, len(data), width(data))
             return None
         return Picture("page", img_url, mime, data)
